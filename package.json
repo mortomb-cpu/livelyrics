@@ -1,0 +1,32 @@
+{
+  "name": "livelyrics",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"node --watch server.js\"",
+    "dev:client": "vite",
+    "dev:server": "node server.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "concurrently": "^9.1.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "mammoth": "^1.8.0",
+    "pdfjs-dist": "^4.7.76",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "vite": "^6.0.0"
+  }
+}
