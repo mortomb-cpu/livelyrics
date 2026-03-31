@@ -94,11 +94,18 @@ export function useDeepgramRecognition(lyricsLines = []) {
     return { idx: bestIdx, score: bestScore }
   }, [])
 
-  const processTranscript = useCallback((text, isFinal) => {
+  const processTranscript = useCallback((text, isFinal, dgConfidence) => {
+    // GATE 1: Ignore low-confidence results (ambient noise, hums, mumbles)
+    if (dgConfidence < 0.65) return
+
+    // GATE 2: Ignore very short transcripts (noise artifacts)
+    const words = text.trim().split(/\s+/).filter(w => w.length > 1)
+    if (words.length < 3) return
+
     if (isFinal && text.trim()) {
       transcriptBufferRef.current += ' ' + text.trim()
-      const words = transcriptBufferRef.current.trim().split(/\s+/)
-      if (words.length > 50) transcriptBufferRef.current = words.slice(-50).join(' ')
+      const bufWords = transcriptBufferRef.current.trim().split(/\s+/)
+      if (bufWords.length > 50) transcriptBufferRef.current = bufWords.slice(-50).join(' ')
     }
 
     const full = (transcriptBufferRef.current + ' ' + text).trim()
@@ -112,7 +119,8 @@ export function useDeepgramRecognition(lyricsLines = []) {
     if (idx < highWaterMarkRef.current) return
     const jumpSize = idx - currentLineRef.current
     if (jumpSize > 6 && score < 0.5) return
-    if (idx >= 0 && score >= 0.35 && idx >= currentLineRef.current) {
+    // Higher threshold for cloud — 0.45 instead of 0.35
+    if (idx >= 0 && score >= 0.45 && idx >= currentLineRef.current) {
       currentLineRef.current = idx
       highWaterMarkRef.current = Math.max(highWaterMarkRef.current, idx)
       setCurrentLineIndex(idx)
@@ -237,8 +245,9 @@ export function useDeepgramRecognition(lyricsLines = []) {
             const text = alt.transcript || ''
             const isFinal = data.is_final || false
             if (text) {
-              setConfidence(alt.confidence || 0)
-              processTranscript(text, isFinal)
+              const dgConf = alt.confidence || 0
+              setConfidence(dgConf)
+              processTranscript(text, isFinal, dgConf)
             }
           }
         } catch (e) {}
@@ -258,7 +267,7 @@ export function useDeepgramRecognition(lyricsLines = []) {
 
       // Start drift
       driftIntervalRef.current = setInterval(() => {
-        if (Date.now() - lastMatchTimeRef.current > 8000 && currentLineRef.current < linesRef.current.length - 1) {
+        if (Date.now() - lastMatchTimeRef.current > 15000 && currentLineRef.current < linesRef.current.length - 1) {
           const newIdx = currentLineRef.current + 1
           currentLineRef.current = newIdx
           highWaterMarkRef.current = Math.max(highWaterMarkRef.current, newIdx)

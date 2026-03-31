@@ -576,7 +576,8 @@ async function startCloudVoice() {
         if (data.channel && data.channel.alternatives && data.channel.alternatives[0]) {
           var text = data.channel.alternatives[0].transcript || '';
           var isFinal = data.is_final || false;
-          if (text) processCloudTranscript(text, isFinal);
+          var dgConf = data.channel.alternatives[0].confidence || 0;
+          if (text) processCloudTranscript(text, isFinal, dgConf);
         }
       } catch(e) {}
     };
@@ -592,7 +593,13 @@ async function startCloudVoice() {
   }
 }
 
-function processCloudTranscript(text, isFinal) {
+function processCloudTranscript(text, isFinal, dgConf) {
+  // GATE 1: Ignore low-confidence results (ambient noise)
+  if (dgConf < 0.65) return;
+  // GATE 2: Ignore very short transcripts (noise artifacts)
+  var words = text.trim().split(/\\s+/).filter(function(w){return w.length>1;});
+  if (words.length < 3) return;
+
   if (isFinal && text.trim()) {
     transcriptBuffer += ' ' + text.trim();
     var bw = transcriptBuffer.trim().split(/\\s+/);
@@ -624,7 +631,8 @@ function processCloudTranscript(text, isFinal) {
   if (now - lastScrollTime < 800) return;
   if (bestIdx < highWaterMark) return;
   if (bestIdx - currentLineIndex > 6 && bestScore < 0.5) return;
-  if (bestIdx >= 0 && bestScore >= 0.35 && bestIdx >= currentLineIndex) {
+  // Higher threshold for cloud — 0.45 instead of 0.35
+  if (bestIdx >= 0 && bestScore >= 0.45 && bestIdx >= currentLineIndex) {
     currentLineIndex = bestIdx; highWaterMark = Math.max(highWaterMark, bestIdx);
     lastMatchTime = now; lastScrollTime = now;
     updateActiveLine();
