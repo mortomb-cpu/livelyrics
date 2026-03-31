@@ -530,33 +530,16 @@ async function startCloudVoice() {
       cloudConnected = true; render();
       try {
         dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        // Critical: resume AudioContext (suspended by default on mobile/tablets)
         if (dgAudioCtx.state === 'suspended') await dgAudioCtx.resume();
-        console.log('[cloud] AudioContext:', dgAudioCtx.state, 'rate:', dgAudioCtx.sampleRate);
 
         var source = dgAudioCtx.createMediaStreamSource(dgStream);
-
-        // Vocal isolation filters
-        var hp = dgAudioCtx.createBiquadFilter();
-        hp.type = 'highpass'; hp.frequency.value = 250; hp.Q.value = 0.7;
-        var lp = dgAudioCtx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.7;
-        var vb = dgAudioCtx.createBiquadFilter();
-        vb.type = 'peaking'; vb.frequency.value = 1500; vb.gain.value = 6; vb.Q.value = 1.0;
-        var comp = dgAudioCtx.createDynamicsCompressor();
-        comp.threshold.value = -30; comp.knee.value = 10; comp.ratio.value = 4;
-        comp.attack.value = 0.003; comp.release.value = 0.1;
-        var gn = dgAudioCtx.createGain();
-        gn.gain.value = 2.0;
-
-        source.connect(hp); hp.connect(lp); lp.connect(vb); vb.connect(comp); comp.connect(gn);
-
         dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
+
+        // No manual filters — browser's native noiseSuppression handles it better
         var ctxRate = dgAudioCtx.sampleRate;
         dgProcessor.onaudioprocess = function(e) {
           if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
           var input = e.inputBuffer.getChannelData(0);
-          // Resample to 16kHz if needed
           var samples = input;
           if (ctxRate !== 16000) {
             var ratio = 16000 / ctxRate;
@@ -574,9 +557,8 @@ async function startCloudVoice() {
           for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
           dgWs.send(int16.buffer);
         };
-        gn.connect(dgProcessor);
+        source.connect(dgProcessor);
         dgProcessor.connect(dgAudioCtx.destination);
-        console.log('[cloud] Audio pipeline ready');
       } catch(err) { console.error('[cloud] Audio setup failed:', err); }
     };
 
@@ -642,7 +624,7 @@ function processCloudTranscript(text, isFinal, dgConf) {
   if (bestIdx < highWaterMark) return;
   if (bestIdx - currentLineIndex > 6 && bestScore < 0.5) return;
   // Higher threshold for cloud — 0.45 instead of 0.35
-  if (bestIdx >= 0 && bestScore >= 0.45 && bestIdx >= currentLineIndex) {
+  if (bestIdx >= 0 && bestScore >= 0.30 && bestIdx >= currentLineIndex) {
     currentLineIndex = bestIdx; highWaterMark = Math.max(highWaterMark, bestIdx);
     lastMatchTime = now; lastScrollTime = now;
     updateActiveLine();

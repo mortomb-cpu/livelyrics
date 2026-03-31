@@ -120,7 +120,7 @@ export function useDeepgramRecognition(lyricsLines = []) {
     const jumpSize = idx - currentLineRef.current
     if (jumpSize > 6 && score < 0.5) return
     // Higher threshold for cloud — 0.45 instead of 0.35
-    if (idx >= 0 && score >= 0.45 && idx >= currentLineRef.current) {
+    if (idx >= 0 && score >= 0.30 && idx >= currentLineRef.current) {
       currentLineRef.current = idx
       highWaterMarkRef.current = Math.max(highWaterMarkRef.current, idx)
       setCurrentLineIndex(idx)
@@ -167,66 +167,25 @@ export function useDeepgramRecognition(lyricsLines = []) {
         setConnected(true)
 
         try {
-          // Create AudioContext — MUST resume on user interaction
           const audioContext = new (window.AudioContext || window.webkitAudioContext)()
           audioContextRef.current = audioContext
-
-          // Critical: resume AudioContext (suspended by default on mobile/tablets)
-          if (audioContext.state === 'suspended') {
-            await audioContext.resume()
-          }
-          console.log('[deepgram] AudioContext state:', audioContext.state, 'sampleRate:', audioContext.sampleRate)
+          if (audioContext.state === 'suspended') await audioContext.resume()
 
           const source = audioContext.createMediaStreamSource(stream)
-
-          // Vocal isolation filters
-          const highPass = audioContext.createBiquadFilter()
-          highPass.type = 'highpass'
-          highPass.frequency.value = 250
-          highPass.Q.value = 0.7
-
-          const lowPass = audioContext.createBiquadFilter()
-          lowPass.type = 'lowpass'
-          lowPass.frequency.value = 4000
-          lowPass.Q.value = 0.7
-
-          const vocalBoost = audioContext.createBiquadFilter()
-          vocalBoost.type = 'peaking'
-          vocalBoost.frequency.value = 1500
-          vocalBoost.gain.value = 6
-          vocalBoost.Q.value = 1.0
-
-          const compressor = audioContext.createDynamicsCompressor()
-          compressor.threshold.value = -30
-          compressor.knee.value = 10
-          compressor.ratio.value = 4
-          compressor.attack.value = 0.003
-          compressor.release.value = 0.1
-
-          const gain = audioContext.createGain()
-          gain.gain.value = 2.0
-
-          // Chain filters
-          source.connect(highPass)
-          highPass.connect(lowPass)
-          lowPass.connect(vocalBoost)
-          vocalBoost.connect(compressor)
-          compressor.connect(gain)
-
-          // ScriptProcessor to capture PCM and send to Deepgram
           const processor = audioContext.createScriptProcessor(4096, 1, 1)
           processorRef.current = processor
 
-          let sendCount = 0
+          // No manual filters — rely on browser's native noiseSuppression + echoCancellation
+          // which are more sophisticated than simple bandpass filters
+          const ctxRate = audioContext.sampleRate
           processor.onaudioprocess = (e) => {
             if (ws.readyState !== WebSocket.OPEN) return
             const input = e.inputBuffer.getChannelData(0)
 
-            // Resample to 16kHz if AudioContext is at a different rate
-            const contextRate = audioContext.sampleRate
+            // Resample to 16kHz
             let samples = input
-            if (contextRate !== 16000) {
-              const ratio = 16000 / contextRate
+            if (ctxRate !== 16000) {
+              const ratio = 16000 / ctxRate
               const newLen = Math.round(input.length * ratio)
               samples = new Float32Array(newLen)
               for (let i = 0; i < newLen; i++) {
@@ -238,20 +197,15 @@ export function useDeepgramRecognition(lyricsLines = []) {
               }
             }
 
-            // Convert Float32 → Int16
             const int16 = new Int16Array(samples.length)
             for (let i = 0; i < samples.length; i++) {
               int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)))
             }
             ws.send(int16.buffer)
-            sendCount++
-            if (sendCount % 50 === 0) console.log('[deepgram] Sent', sendCount, 'audio chunks')
           }
 
-          gain.connect(processor)
+          source.connect(processor)
           processor.connect(audioContext.destination)
-
-          console.log('[deepgram] Audio pipeline ready')
         } catch (audioErr) {
           console.error('[deepgram] Audio setup failed:', audioErr)
         }
