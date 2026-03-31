@@ -523,51 +523,58 @@ async function startCloudVoice() {
       ['token', DEEPGRAM_KEY]
     );
 
-    dgWs.onopen = function() {
+    dgWs.onopen = async function() {
       cloudConnected = true; render();
-      dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      var source = dgAudioCtx.createMediaStreamSource(dgStream);
+      try {
+        dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // Critical: resume AudioContext (suspended by default on mobile/tablets)
+        if (dgAudioCtx.state === 'suspended') await dgAudioCtx.resume();
+        console.log('[cloud] AudioContext:', dgAudioCtx.state, 'rate:', dgAudioCtx.sampleRate);
 
-      // === VOCAL ISOLATION FILTER CHAIN ===
-      // 1. High-pass at 250Hz — cuts kick drum, bass guitar, floor rumble
-      var hp = dgAudioCtx.createBiquadFilter();
-      hp.type = 'highpass'; hp.frequency.value = 250; hp.Q.value = 0.7;
+        var source = dgAudioCtx.createMediaStreamSource(dgStream);
 
-      // 2. Low-pass at 4000Hz — cuts cymbals, hi-hats, high guitar harmonics
-      var lp = dgAudioCtx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.7;
+        // Vocal isolation filters
+        var hp = dgAudioCtx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 250; hp.Q.value = 0.7;
+        var lp = dgAudioCtx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.7;
+        var vb = dgAudioCtx.createBiquadFilter();
+        vb.type = 'peaking'; vb.frequency.value = 1500; vb.gain.value = 6; vb.Q.value = 1.0;
+        var comp = dgAudioCtx.createDynamicsCompressor();
+        comp.threshold.value = -30; comp.knee.value = 10; comp.ratio.value = 4;
+        comp.attack.value = 0.003; comp.release.value = 0.1;
+        var gn = dgAudioCtx.createGain();
+        gn.gain.value = 2.0;
 
-      // 3. Boost 1500Hz — vocal presence range
-      var vb = dgAudioCtx.createBiquadFilter();
-      vb.type = 'peaking'; vb.frequency.value = 1500; vb.gain.value = 6; vb.Q.value = 1.0;
+        source.connect(hp); hp.connect(lp); lp.connect(vb); vb.connect(comp); comp.connect(gn);
 
-      // 4. Boost 3000Hz — vocal clarity
-      var cb = dgAudioCtx.createBiquadFilter();
-      cb.type = 'peaking'; cb.frequency.value = 3000; cb.gain.value = 4; cb.Q.value = 1.0;
-
-      // 5. Compressor — even out quiet/loud singing
-      var comp = dgAudioCtx.createDynamicsCompressor();
-      comp.threshold.value = -30; comp.knee.value = 10; comp.ratio.value = 4;
-      comp.attack.value = 0.003; comp.release.value = 0.1;
-
-      // 6. Gain boost after filtering
-      var gn = dgAudioCtx.createGain();
-      gn.gain.value = 2.0;
-
-      // Chain: source → hp → lp → vocalBoost → clarity → compressor → gain → processor
-      source.connect(hp); hp.connect(lp); lp.connect(vb);
-      vb.connect(cb); cb.connect(comp); comp.connect(gn);
-
-      dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
-      dgProcessor.onaudioprocess = function(e) {
-        if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
-        var input = e.inputBuffer.getChannelData(0);
-        var int16 = new Int16Array(input.length);
-        for (var i = 0; i < input.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
-        dgWs.send(int16.buffer);
-      };
-      gn.connect(dgProcessor);
-      dgProcessor.connect(dgAudioCtx.destination);
+        dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
+        var ctxRate = dgAudioCtx.sampleRate;
+        dgProcessor.onaudioprocess = function(e) {
+          if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
+          var input = e.inputBuffer.getChannelData(0);
+          // Resample to 16kHz if needed
+          var samples = input;
+          if (ctxRate !== 16000) {
+            var ratio = 16000 / ctxRate;
+            var newLen = Math.round(input.length * ratio);
+            samples = new Float32Array(newLen);
+            for (var i = 0; i < newLen; i++) {
+              var srcIdx = i / ratio;
+              var lo = Math.floor(srcIdx);
+              var hi = Math.min(lo + 1, input.length - 1);
+              var frac = srcIdx - lo;
+              samples[i] = input[lo] * (1 - frac) + input[hi] * frac;
+            }
+          }
+          var int16 = new Int16Array(samples.length);
+          for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+          dgWs.send(int16.buffer);
+        };
+        gn.connect(dgProcessor);
+        dgProcessor.connect(dgAudioCtx.destination);
+        console.log('[cloud] Audio pipeline ready');
+      } catch(err) { console.error('[cloud] Audio setup failed:', err); }
     };
 
     dgWs.onmessage = function(event) {

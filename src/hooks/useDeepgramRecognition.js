@@ -162,78 +162,98 @@ export function useDeepgramRecognition(lyricsLines = []) {
         ['token', DEEPGRAM_KEY]
       )
 
-      ws.onopen = () => {
+      ws.onopen = async () => {
         console.log('[deepgram] Connected with', keywords.length, 'keyword boosts')
         setConnected(true)
 
-        // Set up audio processing with vocal isolation filters
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
-        audioContextRef.current = audioContext
-        const source = audioContext.createMediaStreamSource(stream)
+        try {
+          // Create AudioContext — MUST resume on user interaction
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+          audioContextRef.current = audioContext
 
-        // === VOCAL ISOLATION FILTER CHAIN ===
-        // 1. High-pass filter at 250Hz — cuts kick drum, bass guitar, floor rumble
-        const highPass = audioContext.createBiquadFilter()
-        highPass.type = 'highpass'
-        highPass.frequency.value = 250
-        highPass.Q.value = 0.7
-
-        // 2. Low-pass filter at 4000Hz — cuts cymbals, hi-hats, high guitar harmonics
-        const lowPass = audioContext.createBiquadFilter()
-        lowPass.type = 'lowpass'
-        lowPass.frequency.value = 4000
-        lowPass.Q.value = 0.7
-
-        // 3. Peaking EQ boost at 1500Hz — presence range where vocals cut through
-        const vocalBoost = audioContext.createBiquadFilter()
-        vocalBoost.type = 'peaking'
-        vocalBoost.frequency.value = 1500
-        vocalBoost.gain.value = 6 // +6dB boost in vocal presence range
-        vocalBoost.Q.value = 1.0
-
-        // 4. Peaking EQ boost at 3000Hz — vocal clarity/intelligibility range
-        const clarityBoost = audioContext.createBiquadFilter()
-        clarityBoost.type = 'peaking'
-        clarityBoost.frequency.value = 3000
-        clarityBoost.gain.value = 4 // +4dB
-        clarityBoost.Q.value = 1.0
-
-        // 5. Compressor — evens out volume between quiet and loud singing
-        const compressor = audioContext.createDynamicsCompressor()
-        compressor.threshold.value = -30  // Start compressing at -30dB
-        compressor.knee.value = 10
-        compressor.ratio.value = 4        // 4:1 compression ratio
-        compressor.attack.value = 0.003   // Fast attack to catch transients
-        compressor.release.value = 0.1    // Quick release
-
-        // 6. Gain — boost the filtered signal
-        const gain = audioContext.createGain()
-        gain.gain.value = 2.0  // +6dB overall boost after filtering
-
-        // Chain: source → highpass → lowpass → vocal boost → clarity → compressor → gain → processor
-        source.connect(highPass)
-        highPass.connect(lowPass)
-        lowPass.connect(vocalBoost)
-        vocalBoost.connect(clarityBoost)
-        clarityBoost.connect(compressor)
-        compressor.connect(gain)
-
-        // Use ScriptProcessor to get raw PCM data
-        const processor = audioContext.createScriptProcessor(4096, 1, 1)
-        processorRef.current = processor
-
-        gain.connect(processor)
-        processor.connect(audioContext.destination)
-
-        processor.onaudioprocess = (e) => {
-          if (ws.readyState !== WebSocket.OPEN) return
-          const input = e.inputBuffer.getChannelData(0)
-          // Convert Float32 to Int16
-          const int16 = new Int16Array(input.length)
-          for (let i = 0; i < input.length; i++) {
-            int16[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)))
+          // Critical: resume AudioContext (suspended by default on mobile/tablets)
+          if (audioContext.state === 'suspended') {
+            await audioContext.resume()
           }
-          ws.send(int16.buffer)
+          console.log('[deepgram] AudioContext state:', audioContext.state, 'sampleRate:', audioContext.sampleRate)
+
+          const source = audioContext.createMediaStreamSource(stream)
+
+          // Vocal isolation filters
+          const highPass = audioContext.createBiquadFilter()
+          highPass.type = 'highpass'
+          highPass.frequency.value = 250
+          highPass.Q.value = 0.7
+
+          const lowPass = audioContext.createBiquadFilter()
+          lowPass.type = 'lowpass'
+          lowPass.frequency.value = 4000
+          lowPass.Q.value = 0.7
+
+          const vocalBoost = audioContext.createBiquadFilter()
+          vocalBoost.type = 'peaking'
+          vocalBoost.frequency.value = 1500
+          vocalBoost.gain.value = 6
+          vocalBoost.Q.value = 1.0
+
+          const compressor = audioContext.createDynamicsCompressor()
+          compressor.threshold.value = -30
+          compressor.knee.value = 10
+          compressor.ratio.value = 4
+          compressor.attack.value = 0.003
+          compressor.release.value = 0.1
+
+          const gain = audioContext.createGain()
+          gain.gain.value = 2.0
+
+          // Chain filters
+          source.connect(highPass)
+          highPass.connect(lowPass)
+          lowPass.connect(vocalBoost)
+          vocalBoost.connect(compressor)
+          compressor.connect(gain)
+
+          // ScriptProcessor to capture PCM and send to Deepgram
+          const processor = audioContext.createScriptProcessor(4096, 1, 1)
+          processorRef.current = processor
+
+          let sendCount = 0
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState !== WebSocket.OPEN) return
+            const input = e.inputBuffer.getChannelData(0)
+
+            // Resample to 16kHz if AudioContext is at a different rate
+            const contextRate = audioContext.sampleRate
+            let samples = input
+            if (contextRate !== 16000) {
+              const ratio = 16000 / contextRate
+              const newLen = Math.round(input.length * ratio)
+              samples = new Float32Array(newLen)
+              for (let i = 0; i < newLen; i++) {
+                const srcIdx = i / ratio
+                const lo = Math.floor(srcIdx)
+                const hi = Math.min(lo + 1, input.length - 1)
+                const frac = srcIdx - lo
+                samples[i] = input[lo] * (1 - frac) + input[hi] * frac
+              }
+            }
+
+            // Convert Float32 → Int16
+            const int16 = new Int16Array(samples.length)
+            for (let i = 0; i < samples.length; i++) {
+              int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)))
+            }
+            ws.send(int16.buffer)
+            sendCount++
+            if (sendCount % 50 === 0) console.log('[deepgram] Sent', sendCount, 'audio chunks')
+          }
+
+          gain.connect(processor)
+          processor.connect(audioContext.destination)
+
+          console.log('[deepgram] Audio pipeline ready')
+        } catch (audioErr) {
+          console.error('[deepgram] Audio setup failed:', audioErr)
         }
       }
 
