@@ -75,6 +75,8 @@ html, body { height: 100%; overflow: hidden; background: #000; color: #e2e8f0; f
 .tbtn-auto { background: #059669; color: #fff; }
 .tbtn-auto-paused { background: #d97706; color: #fff; }
 .tbtn-timed { background: #9333ea; color: #fff; }
+.tbtn-cloud { background: #2563eb; color: #fff; }
+.tbtn-cloud-connecting { background: #ca8a04; color: #fff; }
 .tbtn-lib { background: #0891b2; color: #fff; }
 .tbtn-back { background: #4f46e5; color: #fff; }
 .tbtn-sz { background: none; border: none; color: #64748b; font-size: 11px; width: 24px; height: 24px; cursor: pointer; }
@@ -161,6 +163,9 @@ var librarySong = null, savedSetIdx = null;
 var showSetList = false, showLibrary = false;
 var allLines = [];
 var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var DEEPGRAM_KEY = '248fb866c5469f73c3955fd4347220023a577c5b';
+var cloudVoiceEnabled = false, isCloudListening = false, cloudConnected = false;
+var dgWs = null, dgStream = null, dgProcessor = null, dgAudioCtx = null;
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
@@ -233,7 +238,7 @@ function render() {
       var s = sections[si], lh = '';
       if (s.label) lh += '<div class="section-label">' + esc(s.label) + '</div>';
       for (var li = 0; li < s.lines.length; li++) {
-        var isActive = gi === currentLineIndex && ((voiceEnabled && isListening) || (timedEnabled && timedRunning));
+        var isActive = gi === currentLineIndex && ((voiceEnabled && isListening) || (cloudVoiceEnabled && isCloudListening) || (timedEnabled && timedRunning));
         lh += '<p class="line' + (isActive ? ' active' : '') + '" id="line-' + si + '-' + li + '" style="font-size:' + fontSize + 'px">' + esc(s.lines[li]) + '</p>';
         gi++;
       }
@@ -257,7 +262,8 @@ function render() {
   }
 
   // Top bar buttons
-  var voiceBtn = SR ? '<button class="tbtn ' + (voiceEnabled ? 'tbtn-voice' : 'tbtn-off') + '" onclick="toggleVoice()">' + (voiceEnabled ? '\\uD83C\\uDFA4 ON' : '\\uD83C\\uDFA4 Voice') + '</button>' : '';
+  var voiceBtn = SR ? '<button class="tbtn ' + (voiceEnabled ? 'tbtn-voice' : 'tbtn-off') + '" onclick="toggleVoice()">' + (voiceEnabled ? '\\uD83C\\uDFA4 Local' : '\\uD83C\\uDFA4 Voice') + '</button>' : '';
+  var cloudBtn = '<button class="tbtn ' + (cloudVoiceEnabled ? (cloudConnected ? 'tbtn-cloud' : 'tbtn-cloud-connecting') : 'tbtn-off') + '" onclick="toggleCloudVoice()">' + (cloudVoiceEnabled ? (cloudConnected ? '\\u2601 Cloud' : '\\u2601 ...') : '\\u2601 Cloud') + '</button>';
   var autoBtn = '<button class="tbtn ' + (autoScrollEnabled ? (autoScrollPaused ? 'tbtn-auto-paused' : 'tbtn-auto') : 'tbtn-off') + '" onclick="toggleAuto()">' + (autoScrollEnabled ? (autoScrollPaused ? '\\u23F8 Paused' : '\\u25B6 Scrolling') : '\\u25B6 Auto') + '</button>';
   var timedBtn = hasSynced ? '<button class="tbtn ' + (timedEnabled ? 'tbtn-timed' : 'tbtn-off') + '" onclick="toggleTimed()">' + (timedEnabled ? '\\u23F1 Synced' : '\\u23F1 Timed') + '</button>' : '';
   var setListBtn = '<button class="tbtn tbtn-off" onclick="showSetList=true;render()">Set List</button>';
@@ -275,7 +281,7 @@ function render() {
         '<button class="tbtn-sz" onclick="fontSize=Math.max(18,fontSize-4);render()">A-</button>' +
         '<button class="tbtn-sz" onclick="fontSize=Math.min(56,fontSize+4);render()">A+</button>' +
         '<div class="divider"></div>' +
-        voiceBtn + autoBtn + timedBtn +
+        voiceBtn + cloudBtn + autoBtn + timedBtn +
         '<div class="divider"></div>' +
         setListBtn + libraryBtn + backBtn +
       '</div>' +
@@ -403,7 +409,7 @@ function scrollToCurrentLine() {
 // ============ VOICE MODE ============
 function toggleVoice() {
   voiceEnabled = !voiceEnabled;
-  if (voiceEnabled) { autoScrollEnabled = false; stopAutoScroll(); timedEnabled = false; stopTimed(); startVoice(); }
+  if (voiceEnabled) { cloudVoiceEnabled = false; stopCloudVoice(); autoScrollEnabled = false; stopAutoScroll(); timedEnabled = false; stopTimed(); startVoice(); }
   else stopVoice();
   render();
 }
@@ -478,6 +484,118 @@ function startDrift() {
   }, 4000);
 }
 function stopDrift() { if (driftInterval) { clearInterval(driftInterval); driftInterval = null; } }
+
+// ============ CLOUD VOICE (DEEPGRAM) ============
+function toggleCloudVoice() {
+  if (!cloudVoiceEnabled) {
+    cloudVoiceEnabled = true;
+    voiceEnabled = false; stopVoice();
+    autoScrollEnabled = false; stopAutoScroll();
+    timedEnabled = false; stopTimed();
+    startCloudVoice();
+  } else {
+    cloudVoiceEnabled = false;
+    stopCloudVoice();
+  }
+  render();
+}
+
+async function startCloudVoice() {
+  try {
+    dgStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
+    });
+
+    dgWs = new WebSocket(
+      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000&channels=1',
+      ['token', DEEPGRAM_KEY]
+    );
+
+    dgWs.onopen = function() {
+      cloudConnected = true; render();
+      dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      var source = dgAudioCtx.createMediaStreamSource(dgStream);
+      dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
+      dgProcessor.onaudioprocess = function(e) {
+        if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
+        var input = e.inputBuffer.getChannelData(0);
+        var int16 = new Int16Array(input.length);
+        for (var i = 0; i < input.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
+        dgWs.send(int16.buffer);
+      };
+      source.connect(dgProcessor);
+      dgProcessor.connect(dgAudioCtx.destination);
+    };
+
+    dgWs.onmessage = function(event) {
+      try {
+        var data = JSON.parse(event.data);
+        if (data.channel && data.channel.alternatives && data.channel.alternatives[0]) {
+          var text = data.channel.alternatives[0].transcript || '';
+          var isFinal = data.is_final || false;
+          if (text) processCloudTranscript(text, isFinal);
+        }
+      } catch(e) {}
+    };
+
+    dgWs.onerror = function() { cloudConnected = false; render(); };
+    dgWs.onclose = function() { cloudConnected = false; isCloudListening = false; render(); };
+
+    isCloudListening = true;
+    startDrift();
+    render();
+  } catch(e) {
+    cloudVoiceEnabled = false; render();
+  }
+}
+
+function processCloudTranscript(text, isFinal) {
+  if (isFinal && text.trim()) {
+    transcriptBuffer += ' ' + text.trim();
+    var bw = transcriptBuffer.trim().split(/\\s+/);
+    if (bw.length > 50) transcriptBuffer = bw.slice(-50).join(' ');
+  }
+  var full = (transcriptBuffer + ' ' + text).trim();
+  if (!full) return;
+  var recent = full.split(/\\s+/).slice(-20).join(' ');
+  var tw = normalize(recent).split(/\\s+/).filter(function(w){return w.length>1;});
+  if (tw.length < 2) return;
+
+  var bestIdx = -1, bestScore = 0;
+  var start = Math.max(0, currentLineIndex - 2);
+  var end = Math.min(allLines.length, currentLineIndex + 30);
+  for (var i = start; i < end; i++) {
+    var lw = normalize(allLines[i]).split(/\\s+/).filter(function(w){return w.length>1;});
+    if (!lw.length) continue;
+    var score = scoreMatch(tw, lw);
+    var dist = i - currentLineIndex;
+    if (dist < 0) score *= 0.2;
+    else if (dist <= 3) score += 0.15;
+    else if (dist <= 8) score *= (1.0 - (dist-3)*0.04);
+    else { score *= (0.8 - (dist-8)*0.03); if (score < 0.6) score *= 0.5; }
+    if (dist > 0) score += 0.001/dist;
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+
+  var now = Date.now();
+  if (now - lastScrollTime < 800) return;
+  if (bestIdx < highWaterMark) return;
+  if (bestIdx - currentLineIndex > 6 && bestScore < 0.5) return;
+  if (bestIdx >= 0 && bestScore >= 0.35 && bestIdx >= currentLineIndex) {
+    currentLineIndex = bestIdx; highWaterMark = Math.max(highWaterMark, bestIdx);
+    lastMatchTime = now; lastScrollTime = now;
+    updateActiveLine();
+  }
+}
+
+function stopCloudVoice() {
+  if (dgWs) { dgWs.close(); dgWs = null; }
+  if (dgProcessor) { dgProcessor.disconnect(); dgProcessor = null; }
+  if (dgAudioCtx) { dgAudioCtx.close(); dgAudioCtx = null; }
+  if (dgStream) { dgStream.getTracks().forEach(function(t){t.stop();}); dgStream = null; }
+  isCloudListening = false; cloudConnected = false;
+  stopDrift(); transcriptBuffer = '';
+}
 
 // ============ AUTO-SCROLL MODE ============
 function toggleAuto() {

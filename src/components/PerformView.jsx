@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { splitLyricsIntoSections } from '../utils/lyricsService'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
+import { useDeepgramRecognition } from '../hooks/useDeepgramRecognition'
 
 export default function PerformView({ songs, allSongs = [] }) {
   const navigate = useNavigate()
@@ -13,8 +14,9 @@ export default function PerformView({ songs, allSongs = [] }) {
   const [librarySong, setLibrarySong] = useState(null) // temporarily performing a library song
   const [savedSetIdx, setSavedSetIdx] = useState(null) // where we were in the set before library pick
 
-  // Four scroll modes — each can be on or off
+  // Scroll modes — each can be on or off
   const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [cloudVoiceEnabled, setCloudVoiceEnabled] = useState(false)
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false)
   const [autoScrollPaused, setAutoScrollPaused] = useState(false)
   const [timedEnabled, setTimedEnabled] = useState(false)
@@ -41,6 +43,18 @@ export default function PerformView({ songs, allSongs = [] }) {
     isListening, currentLineIndex, setCurrentLineIndex,
     confidence, supported, start: startListening, stop: stopListening, reset: resetRecognition
   } = useSpeechRecognition(allLines)
+
+  const {
+    isListening: isCloudListening, currentLineIndex: cloudLineIndex, setCurrentLineIndex: setCloudLineIndex,
+    connected: cloudConnected, start: startCloud, stop: stopCloud, reset: resetCloud
+  } = useDeepgramRecognition(allLines)
+
+  // Sync cloud line index to the shared currentLineIndex when cloud is active
+  useEffect(() => {
+    if (cloudVoiceEnabled && isCloudListening) {
+      setCurrentLineIndex(cloudLineIndex)
+    }
+  }, [cloudLineIndex, cloudVoiceEnabled, isCloudListening])
 
   // Request fullscreen + robust wake lock on mount
   useEffect(() => {
@@ -87,7 +101,7 @@ export default function PerformView({ songs, allSongs = [] }) {
     controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 5000)
   }, [])
 
-  // ===== VOICE MODE =====
+  // ===== LOCAL VOICE MODE =====
   useEffect(() => {
     if (voiceEnabled && !isListening && supported) {
       startListening()
@@ -99,9 +113,21 @@ export default function PerformView({ songs, allSongs = [] }) {
     }
   }, [voiceEnabled])
 
+  // ===== CLOUD VOICE MODE (Deepgram) =====
+  useEffect(() => {
+    if (cloudVoiceEnabled && !isCloudListening) {
+      startCloud()
+    } else if (!cloudVoiceEnabled && isCloudListening) {
+      stopCloud()
+    }
+    return () => {
+      if (isCloudListening) stopCloud()
+    }
+  }, [cloudVoiceEnabled])
+
   // Scroll to active line when voice recognition updates
   useEffect(() => {
-    if (!voiceEnabled || !isListening) return
+    if (!(voiceEnabled && isListening) && !(cloudVoiceEnabled && isCloudListening)) return
     let lineCount = 0
     for (let si = 0; si < sections.length; si++) {
       for (let li = 0; li < sections[si].lines.length; li++) {
@@ -287,7 +313,7 @@ export default function PerformView({ songs, allSongs = [] }) {
   const goToSong = (idx) => {
     if (idx >= 0 && idx < songs.length) {
       setCurrentSongIdx(idx)
-      resetRecognition()
+      resetRecognition(); resetCloud()
       setAutoScrollPaused(false)
       if (timedRunning) stopTimed()
       timedLineIndexRef.current = 0
@@ -371,7 +397,7 @@ export default function PerformView({ songs, allSongs = [] }) {
     }
     count += lineIdx
     return count === currentLineIndex && (
-      (voiceEnabled && isListening) || (timedEnabled && timedRunning)
+      (voiceEnabled && isListening) || (cloudVoiceEnabled && isCloudListening) || (timedEnabled && timedRunning)
     )
   }
 
@@ -413,13 +439,14 @@ export default function PerformView({ songs, allSongs = [] }) {
 
             <div className="w-px h-4 bg-slate-800 mx-0.5" />
 
-              {/* Voice mode toggle */}
+              {/* Local Voice mode toggle */}
               {supported && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     setVoiceEnabled(v => {
                       if (!v) {
+                        setCloudVoiceEnabled(false); stopCloud()
                         setAutoScrollEnabled(false)
                         setTimedEnabled(false); stopTimed()
                       }
@@ -432,8 +459,31 @@ export default function PerformView({ songs, allSongs = [] }) {
                       : 'bg-slate-700/80 text-slate-400'
                   }`}
                 >
-                  {voiceEnabled ? '🎙 ON' : '🎙 Voice'}
+                  {voiceEnabled ? '🎙 Local' : '🎙 Voice'}
                 </button>
+              )}
+
+              {/* Cloud Voice (Deepgram) toggle */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setCloudVoiceEnabled(v => {
+                    if (!v) {
+                      setVoiceEnabled(false); if (isListening) stopListening()
+                      setAutoScrollEnabled(false)
+                      setTimedEnabled(false); stopTimed()
+                    }
+                    return !v
+                  })
+                }}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  cloudVoiceEnabled
+                    ? cloudConnected ? 'bg-blue-600 text-white' : 'bg-yellow-600 text-white'
+                    : 'bg-slate-700/80 text-slate-400'
+                }`}
+              >
+                {cloudVoiceEnabled ? (cloudConnected ? '☁ Cloud' : '☁ ...') : '☁ Cloud'}
+              </button>
               )}
 
               {/* Auto-scroll toggle */}
@@ -442,7 +492,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                   e.stopPropagation()
                   setAutoScrollEnabled(a => {
                     if (!a) {
-                      setVoiceEnabled(false)
+                      setVoiceEnabled(false); setCloudVoiceEnabled(false); stopCloud()
                       setTimedEnabled(false); stopTimed()
                       setAutoScrollPaused(false)
                     }
@@ -469,7 +519,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                     e.stopPropagation()
                     if (!timedEnabled) {
                       setTimedEnabled(true)
-                      setVoiceEnabled(false)
+                      setVoiceEnabled(false); setCloudVoiceEnabled(false); stopCloud()
                       setAutoScrollEnabled(false)
                       startTimed()
                     } else {
@@ -522,7 +572,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                     setLibrarySong(null)
                     setCurrentSongIdx(savedSetIdx ?? 0)
                     setSavedSetIdx(null)
-                    resetRecognition()
+                    resetRecognition(); resetCloud()
                     if (lyricsContainerRef.current) lyricsContainerRef.current.scrollTop = 0
                   }}
                   className="bg-indigo-600 text-white px-2 py-0.5 rounded text-[11px] font-medium"
@@ -658,7 +708,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                             setSavedSetIdx(null)
                           }
                           setCurrentSongIdx(idx)
-                          resetRecognition()
+                          resetRecognition(); resetCloud()
                           if (lyricsContainerRef.current) lyricsContainerRef.current.scrollTop = 0
                           setShowSetList(false)
                         }}
@@ -714,7 +764,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                         }
                         setLibrarySong({ ...song, setName: 'Library' })
                         setShowLibrary(false)
-                        resetRecognition()
+                        resetRecognition(); resetCloud()
                         if (lyricsContainerRef.current) lyricsContainerRef.current.scrollTop = 0
                       }}
                       className="text-left px-3 py-2.5 rounded-lg transition-colors bg-slate-800/60 hover:bg-slate-700/60"
