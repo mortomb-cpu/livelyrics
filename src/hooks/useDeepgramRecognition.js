@@ -130,6 +130,15 @@ export function useDeepgramRecognition(lyricsLines = []) {
   }, [findBestMatch])
 
   const start = useCallback(async () => {
+    // Reset all state before starting
+    transcriptBufferRef.current = ''
+    currentLineRef.current = 0
+    highWaterMarkRef.current = 0
+    lastScrollTimeRef.current = 0
+    lastMatchTimeRef.current = Date.now()
+    setCurrentLineIndex(0)
+    setConfidence(0)
+
     try {
       // Get mic access
       const stream = await navigator.mediaDevices.getUserMedia({

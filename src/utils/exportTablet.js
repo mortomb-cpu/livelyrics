@@ -495,6 +495,17 @@ function toggleCloudVoice() {
     voiceEnabled = false; stopVoice();
     autoScrollEnabled = false; stopAutoScroll();
     timedEnabled = false; stopTimed();
+    // Reset everything so old data doesn't cause immediate jumps
+    transcriptBuffer = '';
+    currentLineIndex = 0;
+    highWaterMark = 0;
+    lastScrollTime = 0;
+    lastMatchTime = Date.now();
+    prevActiveLineId = null;
+    // Remove all dimmed/active classes
+    document.querySelectorAll('.line.active,.line.dimmed').forEach(function(el) {
+      el.classList.remove('active', 'dimmed');
+    });
     startCloudVoice();
   } else {
     cloudVoiceEnabled = false;
