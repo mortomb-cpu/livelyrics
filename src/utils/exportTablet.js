@@ -594,11 +594,11 @@ async function startCloudVoice() {
 }
 
 function processCloudTranscript(text, isFinal, dgConf) {
-  // GATE 1: Ignore low-confidence results (ambient noise)
-  if (dgConf < 0.65) return;
-  // GATE 2: Ignore very short transcripts (noise artifacts)
+  // GATE 1: Ignore very low confidence (clear noise)
+  if (dgConf < 0.4) return;
+  // GATE 2: Ignore single-word noise bursts
   var words = text.trim().split(/\\s+/).filter(function(w){return w.length>1;});
-  if (words.length < 3) return;
+  if (words.length < 2) return;
 
   if (isFinal && text.trim()) {
     transcriptBuffer += ' ' + text.trim();

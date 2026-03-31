@@ -95,12 +95,12 @@ export function useDeepgramRecognition(lyricsLines = []) {
   }, [])
 
   const processTranscript = useCallback((text, isFinal, dgConfidence) => {
-    // GATE 1: Ignore low-confidence results (ambient noise, hums, mumbles)
-    if (dgConfidence < 0.65) return
+    // GATE 1: Ignore very low confidence (clear noise)
+    if (dgConfidence < 0.4) return
 
-    // GATE 2: Ignore very short transcripts (noise artifacts)
+    // GATE 2: Ignore single-word noise bursts
     const words = text.trim().split(/\s+/).filter(w => w.length > 1)
-    if (words.length < 3) return
+    if (words.length < 2) return
 
     if (isFinal && text.trim()) {
       transcriptBufferRef.current += ' ' + text.trim()
