@@ -503,11 +503,23 @@ function toggleCloudVoice() {
 async function startCloudVoice() {
   try {
     dgStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true }
+      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
 
+    // Build keywords from current song lyrics for Deepgram boost
+    var song = getCurrentSong();
+    var kw = [];
+    if (song && song.lyrics) {
+      var seen = {};
+      song.lyrics.toLowerCase().replace(/[^a-z ]/g, '').split(/\\s+/).forEach(function(w) {
+        if (w.length > 3 && !seen[w]) { seen[w] = 1; kw.push(w); }
+      });
+      kw = kw.slice(0, 100);
+    }
+    var kwParam = kw.length > 0 ? '&keywords=' + kw.map(function(w){return encodeURIComponent(w+':2')}).join('&keywords=') : '';
+
     dgWs = new WebSocket(
-      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000&channels=1',
+      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true&encoding=linear16&sample_rate=16000&channels=1' + kwParam,
       ['token', DEEPGRAM_KEY]
     );
 
@@ -515,6 +527,37 @@ async function startCloudVoice() {
       cloudConnected = true; render();
       dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       var source = dgAudioCtx.createMediaStreamSource(dgStream);
+
+      // === VOCAL ISOLATION FILTER CHAIN ===
+      // 1. High-pass at 250Hz — cuts kick drum, bass guitar, floor rumble
+      var hp = dgAudioCtx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 250; hp.Q.value = 0.7;
+
+      // 2. Low-pass at 4000Hz — cuts cymbals, hi-hats, high guitar harmonics
+      var lp = dgAudioCtx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.7;
+
+      // 3. Boost 1500Hz — vocal presence range
+      var vb = dgAudioCtx.createBiquadFilter();
+      vb.type = 'peaking'; vb.frequency.value = 1500; vb.gain.value = 6; vb.Q.value = 1.0;
+
+      // 4. Boost 3000Hz — vocal clarity
+      var cb = dgAudioCtx.createBiquadFilter();
+      cb.type = 'peaking'; cb.frequency.value = 3000; cb.gain.value = 4; cb.Q.value = 1.0;
+
+      // 5. Compressor — even out quiet/loud singing
+      var comp = dgAudioCtx.createDynamicsCompressor();
+      comp.threshold.value = -30; comp.knee.value = 10; comp.ratio.value = 4;
+      comp.attack.value = 0.003; comp.release.value = 0.1;
+
+      // 6. Gain boost after filtering
+      var gn = dgAudioCtx.createGain();
+      gn.gain.value = 2.0;
+
+      // Chain: source → hp → lp → vocalBoost → clarity → compressor → gain → processor
+      source.connect(hp); hp.connect(lp); lp.connect(vb);
+      vb.connect(cb); cb.connect(comp); comp.connect(gn);
+
       dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
       dgProcessor.onaudioprocess = function(e) {
         if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
@@ -523,7 +566,7 @@ async function startCloudVoice() {
         for (var i = 0; i < input.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(input[i] * 32767)));
         dgWs.send(int16.buffer);
       };
-      source.connect(dgProcessor);
+      gn.connect(dgProcessor);
       dgProcessor.connect(dgAudioCtx.destination);
     };
 

@@ -129,29 +129,93 @@ export function useDeepgramRecognition(lyricsLines = []) {
           channelCount: 1,
           sampleRate: 16000,
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         }
       })
       mediaStreamRef.current = stream
 
+      // Build keywords from current lyrics for Deepgram boost
+      const keywords = [...new Set(
+        linesRef.current
+          .join(' ')
+          .toLowerCase()
+          .replace(/[^a-z ]/g, '')
+          .split(/\s+/)
+          .filter(w => w.length > 3)
+      )].slice(0, 100)
+      const keywordsParam = keywords.length > 0
+        ? '&keywords=' + keywords.map(w => encodeURIComponent(w + ':2')).join('&keywords=')
+        : ''
+
       // Connect to Deepgram via WebSocket
       const ws = new WebSocket(
-        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000&channels=1`,
+        `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true&encoding=linear16&sample_rate=16000&channels=1${keywordsParam}`,
         ['token', DEEPGRAM_KEY]
       )
 
       ws.onopen = () => {
-        console.log('[deepgram] Connected')
+        console.log('[deepgram] Connected with', keywords.length, 'keyword boosts')
         setConnected(true)
 
-        // Set up audio processing
+        // Set up audio processing with vocal isolation filters
         const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
         audioContextRef.current = audioContext
         const source = audioContext.createMediaStreamSource(stream)
 
+        // === VOCAL ISOLATION FILTER CHAIN ===
+        // 1. High-pass filter at 250Hz — cuts kick drum, bass guitar, floor rumble
+        const highPass = audioContext.createBiquadFilter()
+        highPass.type = 'highpass'
+        highPass.frequency.value = 250
+        highPass.Q.value = 0.7
+
+        // 2. Low-pass filter at 4000Hz — cuts cymbals, hi-hats, high guitar harmonics
+        const lowPass = audioContext.createBiquadFilter()
+        lowPass.type = 'lowpass'
+        lowPass.frequency.value = 4000
+        lowPass.Q.value = 0.7
+
+        // 3. Peaking EQ boost at 1500Hz — presence range where vocals cut through
+        const vocalBoost = audioContext.createBiquadFilter()
+        vocalBoost.type = 'peaking'
+        vocalBoost.frequency.value = 1500
+        vocalBoost.gain.value = 6 // +6dB boost in vocal presence range
+        vocalBoost.Q.value = 1.0
+
+        // 4. Peaking EQ boost at 3000Hz — vocal clarity/intelligibility range
+        const clarityBoost = audioContext.createBiquadFilter()
+        clarityBoost.type = 'peaking'
+        clarityBoost.frequency.value = 3000
+        clarityBoost.gain.value = 4 // +4dB
+        clarityBoost.Q.value = 1.0
+
+        // 5. Compressor — evens out volume between quiet and loud singing
+        const compressor = audioContext.createDynamicsCompressor()
+        compressor.threshold.value = -30  // Start compressing at -30dB
+        compressor.knee.value = 10
+        compressor.ratio.value = 4        // 4:1 compression ratio
+        compressor.attack.value = 0.003   // Fast attack to catch transients
+        compressor.release.value = 0.1    // Quick release
+
+        // 6. Gain — boost the filtered signal
+        const gain = audioContext.createGain()
+        gain.gain.value = 2.0  // +6dB overall boost after filtering
+
+        // Chain: source → highpass → lowpass → vocal boost → clarity → compressor → gain → processor
+        source.connect(highPass)
+        highPass.connect(lowPass)
+        lowPass.connect(vocalBoost)
+        vocalBoost.connect(clarityBoost)
+        clarityBoost.connect(compressor)
+        compressor.connect(gain)
+
         // Use ScriptProcessor to get raw PCM data
         const processor = audioContext.createScriptProcessor(4096, 1, 1)
         processorRef.current = processor
+
+        gain.connect(processor)
+        processor.connect(audioContext.destination)
 
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN) return
@@ -163,9 +227,6 @@ export function useDeepgramRecognition(lyricsLines = []) {
           }
           ws.send(int16.buffer)
         }
-
-        source.connect(processor)
-        processor.connect(audioContext.destination)
       }
 
       ws.onmessage = (event) => {
