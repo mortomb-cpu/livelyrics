@@ -517,7 +517,7 @@ function toggleCloudVoice() {
 async function startCloudVoice() {
   try {
     dgStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true }
     });
 
     // Build keywords from current song lyrics for Deepgram boost
@@ -544,9 +544,28 @@ async function startCloudVoice() {
         if (dgAudioCtx.state === 'suspended') await dgAudioCtx.resume();
 
         var source = dgAudioCtx.createMediaStreamSource(dgStream);
-        dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
 
-        // No manual filters — browser's native noiseSuppression handles it better
+        // Vocal isolation filters (noiseSuppression is OFF so raw audio comes through)
+        var hp1 = dgAudioCtx.createBiquadFilter();
+        hp1.type = 'highpass'; hp1.frequency.value = 300; hp1.Q.value = 1.0;
+        var hp2 = dgAudioCtx.createBiquadFilter();
+        hp2.type = 'highpass'; hp2.frequency.value = 300; hp2.Q.value = 1.0;
+        var lp = dgAudioCtx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = 3500; lp.Q.value = 0.7;
+        var vb = dgAudioCtx.createBiquadFilter();
+        vb.type = 'peaking'; vb.frequency.value = 2000; vb.gain.value = 8; vb.Q.value = 1.5;
+        var fb = dgAudioCtx.createBiquadFilter();
+        fb.type = 'peaking'; fb.frequency.value = 1000; fb.gain.value = 6; fb.Q.value = 1.0;
+        var comp = dgAudioCtx.createDynamicsCompressor();
+        comp.threshold.value = -40; comp.knee.value = 10; comp.ratio.value = 8;
+        comp.attack.value = 0.002; comp.release.value = 0.05;
+        var gn = dgAudioCtx.createGain();
+        gn.gain.value = 3.0;
+
+        source.connect(hp1); hp1.connect(hp2); hp2.connect(lp);
+        lp.connect(vb); vb.connect(fb); fb.connect(comp); comp.connect(gn);
+
+        dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
         var ctxRate = dgAudioCtx.sampleRate;
         dgProcessor.onaudioprocess = function(e) {
           if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
@@ -568,7 +587,7 @@ async function startCloudVoice() {
           for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
           dgWs.send(int16.buffer);
         };
-        source.connect(dgProcessor);
+        gn.connect(dgProcessor);
         dgProcessor.connect(dgAudioCtx.destination);
       } catch(err) { console.error('[cloud] Audio setup failed:', err); }
     };

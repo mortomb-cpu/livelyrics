@@ -144,9 +144,8 @@ export function useDeepgramRecognition(lyricsLines = []) {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
+          echoCancellation: false,
+          noiseSuppression: false,
           autoGainControl: true
         }
       })
@@ -181,17 +180,59 @@ export function useDeepgramRecognition(lyricsLines = []) {
           if (audioContext.state === 'suspended') await audioContext.resume()
 
           const source = audioContext.createMediaStreamSource(stream)
+
+          // === VOCAL ISOLATION FILTERS ===
+          // noiseSuppression is OFF so we get raw audio — filters work on real signal
+
+          // Steep high-pass at 300Hz — aggressively cuts kick, bass, low rumble
+          const hp1 = audioContext.createBiquadFilter()
+          hp1.type = 'highpass'; hp1.frequency.value = 300; hp1.Q.value = 1.0
+          // Second high-pass for steeper rolloff
+          const hp2 = audioContext.createBiquadFilter()
+          hp2.type = 'highpass'; hp2.frequency.value = 300; hp2.Q.value = 1.0
+
+          // Low-pass at 3500Hz — cuts cymbals, hi-hats, guitar harmonics
+          const lp = audioContext.createBiquadFilter()
+          lp.type = 'lowpass'; lp.frequency.value = 3500; lp.Q.value = 0.7
+
+          // Notch filters to cut common instrument frequencies
+          // Snare drum body ~200Hz (already cut by HP)
+          // Guitar fundamental ~300-600Hz (overlaps with voice, can't cut too much)
+
+          // Vocal presence boost +8dB at 2kHz — where voice intelligibility lives
+          const vocalBoost = audioContext.createBiquadFilter()
+          vocalBoost.type = 'peaking'; vocalBoost.frequency.value = 2000; vocalBoost.gain.value = 8; vocalBoost.Q.value = 1.5
+
+          // Vocal formant boost +6dB at 1kHz
+          const formantBoost = audioContext.createBiquadFilter()
+          formantBoost.type = 'peaking'; formantBoost.frequency.value = 1000; formantBoost.gain.value = 6; formantBoost.Q.value = 1.0
+
+          // Compressor — squash dynamic range so quiet words aren't lost
+          const compressor = audioContext.createDynamicsCompressor()
+          compressor.threshold.value = -40; compressor.knee.value = 10
+          compressor.ratio.value = 8; compressor.attack.value = 0.002; compressor.release.value = 0.05
+
+          // Gain boost
+          const gain = audioContext.createGain()
+          gain.gain.value = 3.0
+
+          // Chain: source → HP → HP → LP → vocalBoost → formant → compressor → gain → processor
+          source.connect(hp1)
+          hp1.connect(hp2)
+          hp2.connect(lp)
+          lp.connect(vocalBoost)
+          vocalBoost.connect(formantBoost)
+          formantBoost.connect(compressor)
+          compressor.connect(gain)
+
           const processor = audioContext.createScriptProcessor(4096, 1, 1)
           processorRef.current = processor
 
-          // No manual filters — rely on browser's native noiseSuppression + echoCancellation
-          // which are more sophisticated than simple bandpass filters
           const ctxRate = audioContext.sampleRate
           processor.onaudioprocess = (e) => {
             if (ws.readyState !== WebSocket.OPEN) return
             const input = e.inputBuffer.getChannelData(0)
 
-            // Resample to 16kHz
             let samples = input
             if (ctxRate !== 16000) {
               const ratio = 16000 / ctxRate
@@ -213,7 +254,7 @@ export function useDeepgramRecognition(lyricsLines = []) {
             ws.send(int16.buffer)
           }
 
-          source.connect(processor)
+          gain.connect(processor)
           processor.connect(audioContext.destination)
         } catch (audioErr) {
           console.error('[deepgram] Audio setup failed:', audioErr)
