@@ -586,7 +586,7 @@ async function startCloudVoice() {
     dgWs.onclose = function() { cloudConnected = false; isCloudListening = false; render(); };
 
     isCloudListening = true;
-    startDrift();
+    // NO drift for cloud mode — only scroll when Deepgram hears actual singing
     render();
   } catch(e) {
     cloudVoiceEnabled = false; render();

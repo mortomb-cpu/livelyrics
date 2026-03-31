@@ -265,16 +265,8 @@ export function useDeepgramRecognition(lyricsLines = []) {
       wsRef.current = ws
       setIsListening(true)
 
-      // Start drift
-      driftIntervalRef.current = setInterval(() => {
-        if (Date.now() - lastMatchTimeRef.current > 15000 && currentLineRef.current < linesRef.current.length - 1) {
-          const newIdx = currentLineRef.current + 1
-          currentLineRef.current = newIdx
-          highWaterMarkRef.current = Math.max(highWaterMarkRef.current, newIdx)
-          setCurrentLineIndex(newIdx)
-          lastMatchTimeRef.current = Date.now() - 5000
-        }
-      }, 4000)
+      // NO DRIFT for cloud mode — Deepgram is accurate enough,
+      // we only scroll when it actually hears singing.
 
     } catch (e) {
       console.error('[deepgram] Failed to start:', e)
