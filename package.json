@@ -3,14 +3,18 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "electron.cjs",
   "scripts": {
     "dev": "concurrently \"vite\" \"node --watch server.js\"",
     "dev:client": "vite",
     "dev:server": "node server.js",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
     "cheerio": "^1.0.0",
     "concurrently": "^9.1.0",
     "cors": "^2.8.5",
@@ -25,8 +29,38 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "electron": "^41.1.0",
+    "electron-builder": "^26.8.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.livelyrics.app",
+    "productName": "LiveLyrics",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "server.js",
+      "electron.cjs",
+      "server-prod.cjs",
+      "public/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "server.js",
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
   }
 }

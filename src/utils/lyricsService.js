@@ -5,18 +5,21 @@ import { getCachedLyrics, cacheLyrics } from './lyricsCache'
  * Any successfully fetched lyrics are saved to cache for future use.
  */
 export async function fetchLyrics(artist, title) {
-  if (!artist || !title) {
-    throw new Error('Both artist and title are required')
+  if (!title) {
+    throw new Error('Song title is required')
   }
 
-  // Check cache first
-  const cached = await getCachedLyrics(artist, title)
-  if (cached) {
-    return cached
+  // Check cache first (only if we have an artist for the cache key)
+  if (artist) {
+    const cached = await getCachedLyrics(artist, title)
+    if (cached) {
+      return cached
+    }
   }
 
   // Fetch from server
-  const params = new URLSearchParams({ artist, title })
+  const params = new URLSearchParams({ title })
+  if (artist) params.set('artist', artist)
   const response = await fetch(`/api/lyrics?${params}`)
   const data = await response.json()
 
@@ -25,52 +28,89 @@ export async function fetchLyrics(artist, title) {
   }
 
   // Save to persistent cache for future shows
-  await cacheLyrics(artist, title, data.lyrics)
+  const cacheArtist = data.artist || artist || ''
+  if (cacheArtist) {
+    await cacheLyrics(cacheArtist, title, data.lyrics)
+  }
 
-  return data.lyrics
+  return {
+    lyrics: data.lyrics,
+    bpm: data.bpm || 120,
+    syncedLines: data.syncedLines || null,
+    duration: data.duration || null
+  }
 }
 
 /**
  * Fetch lyrics for multiple songs with progress callback.
  * Uses cache when available — cached songs are instant, no network needed.
  */
-export async function fetchAllLyrics(songs, onProgress) {
+export async function fetchAllLyrics(songs, onProgress, abortSignal) {
   const results = []
   let completed = 0
 
+  // Phase 1: quickly resolve cached/skipped songs (instant, no network)
+  const toFetchOnline = []
   for (const song of songs) {
-    // Skip songs that already have lyrics loaded in current session
     if (song.lyrics && song.lyricsStatus !== 'pending') {
-      results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus })
-      completed++
-      onProgress?.(completed, songs.length, song.title, 'skipped')
+      // Has lyrics but missing syncedLines? Still need to fetch from server for synced data
+      if (!song.syncedLines) {
+        toFetchOnline.push(song)
+      } else {
+        results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm })
+        completed++
+        onProgress?.(completed, songs.length, song.title, 'skipped')
+      }
       continue
     }
 
-    try {
-      // Check persistent cache first (instant, no delay needed)
-      const cached = await getCachedLyrics(song.artist, song.title)
-      if (cached) {
-        results.push({ id: song.id, lyrics: cached, status: 'cached' })
-        completed++
-        onProgress?.(completed, songs.length, song.title, 'cached')
-        continue
-      }
-
-      // Need to fetch online — add delay to avoid hammering server
-      if (results.some(r => r.status === 'fetched')) {
-        await new Promise(r => setTimeout(r, 1500))
-      }
-
-      onProgress?.(completed, songs.length, song.title, 'fetching')
-      const lyrics = await fetchLyrics(song.artist, song.title)
-      results.push({ id: song.id, lyrics, status: 'fetched' })
-      onProgress?.(completed + 1, songs.length, song.title, 'success')
-    } catch (err) {
-      results.push({ id: song.id, lyrics: '', status: 'failed', error: err.message })
-      onProgress?.(completed + 1, songs.length, song.title, 'failed')
+    const cached = song.artist ? await getCachedLyrics(song.artist, song.title) : null
+    if (cached) {
+      // Got lyrics from cache but need synced data from server
+      toFetchOnline.push({ ...song, lyrics: cached, _cachedLyrics: true })
+      continue
     }
-    completed++
+
+    toFetchOnline.push(song)
+  }
+
+  // Phase 2: fetch remaining songs in parallel batches of 3
+  const BATCH_SIZE = 3
+  for (let i = 0; i < toFetchOnline.length; i += BATCH_SIZE) {
+    if (abortSignal?.aborted) break
+    const batch = toFetchOnline.slice(i, i + BATCH_SIZE)
+
+    const batchResults = await Promise.allSettled(
+      batch.map(async (song) => {
+        onProgress?.(completed, songs.length, song.title, song._cachedLyrics ? 'syncing' : 'fetching')
+        const result = await fetchLyrics(song.artist, song.title)
+        return {
+          id: song.id,
+          lyrics: song._cachedLyrics ? song.lyrics : result.lyrics, // keep cached lyrics if we had them
+          bpm: result.bpm,
+          syncedLines: result.syncedLines,
+          duration: result.duration,
+          status: song._cachedLyrics ? 'cached' : 'fetched'
+        }
+      })
+    )
+
+    for (let j = 0; j < batchResults.length; j++) {
+      const br = batchResults[j]
+      if (br.status === 'fulfilled') {
+        results.push(br.value)
+        onProgress?.(completed + 1, songs.length, batch[j].title, 'success')
+      } else {
+        results.push({ id: batch[j].id, lyrics: '', status: 'failed', error: br.reason?.message })
+        onProgress?.(completed + 1, songs.length, batch[j].title, 'failed')
+      }
+      completed++
+    }
+
+    // Small delay between batches to be polite to external APIs
+    if (i + BATCH_SIZE < toFetchOnline.length) {
+      await new Promise(r => setTimeout(r, 500))
+    }
   }
 
   return results

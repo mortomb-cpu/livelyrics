@@ -93,6 +93,8 @@ export function useSpeechRecognition(lyricsLines = []) {
   const currentLineRef = useRef(0)
   const transcriptBufferRef = useRef('')     // Accumulates recent transcripts
   const lastMatchTimeRef = useRef(Date.now())
+  const lastScrollTimeRef = useRef(0)        // Cooldown between scroll changes
+  const highWaterMarkRef = useRef(0)         // Furthest line we've reached (no going back)
   const driftIntervalRef = useRef(null)
 
   useEffect(() => {
@@ -122,8 +124,7 @@ export function useSpeechRecognition(lyricsLines = []) {
     let bestIdx = -1
     let bestScore = 0
 
-    // Search window: current position to 30 lines ahead
-    // Small lookback (2 lines) only to handle slight timing misalignment
+    // Search window: small lookback + forward
     const searchStart = Math.max(0, current - 2)
     const searchEnd = Math.min(linesRef.current.length, current + 30)
 
@@ -133,16 +134,31 @@ export function useSpeechRecognition(lyricsLines = []) {
 
       let score = scoreMatch(transcriptWords, lineWords)
 
-      // Strong forward bias: lines ahead of current get a bonus,
-      // lines behind get penalized
-      if (i > current) {
-        // Slight bonus for being ahead (prefer forward movement)
-        score += 0.05
-        // Extra bonus for being just slightly ahead (1-3 lines) — most natural progression
-        if (i <= current + 3) score += 0.05
-      } else if (i < current) {
-        // Heavy penalty for going backwards
-        score *= 0.3
+      const distance = i - current
+
+      if (distance < 0) {
+        // Going backwards — heavy penalty
+        score *= 0.2
+      } else if (distance >= 0) {
+        // Forward: strong preference for the CLOSEST match
+        // Lines 0-3 ahead: full score + bonus
+        // Lines 4-8 ahead: slight decay
+        // Lines 9+ ahead: significant decay — prevents jumping to distant repeated sections
+        if (distance <= 3) {
+          score += 0.15  // Strong bonus for immediate next lines
+        } else if (distance <= 8) {
+          score *= (1.0 - (distance - 3) * 0.04)  // Gentle decay
+        } else {
+          score *= (0.8 - (distance - 8) * 0.03)  // Steeper decay for distant lines
+          // Only allow distant jumps if the match is near-perfect
+          if (score < 0.6) score *= 0.5
+        }
+      }
+
+      // Tiebreaker: when scores are very close, prefer the closer line
+      // Add tiny proximity bonus that won't override a genuinely better match
+      if (distance > 0) {
+        score += 0.001 / distance
       }
 
       if (score > bestScore) {
@@ -227,18 +243,30 @@ export function useSpeechRecognition(lyricsLines = []) {
         const recentWords = fullTranscript.split(/\s+/).slice(-20).join(' ')
         const { idx, score } = findBestMatch(recentWords)
 
-        // Only accept matches with high confidence
-        // Require higher score for backwards movement
         const current = currentLineRef.current
-        const minScore = idx < current ? 0.7 : 0.25
+        const now = Date.now()
 
-        if (idx >= 0 && score >= minScore) {
-          // Forward-only: only accept if moving forward or staying close
-          if (idx >= current - 2) {
-            currentLineRef.current = idx
-            setCurrentLineIndex(idx)
-            lastMatchTimeRef.current = Date.now()
-          }
+        // STABILITY RULES:
+        // 1. Cooldown: minimum 800ms between scroll changes (prevents rapid jumping)
+        if (now - lastScrollTimeRef.current < 800) return
+
+        // 2. STRICTLY FORWARD ONLY: never go behind the high water mark
+        //    This prevents ALL backwards scrolling during a song
+        if (idx < highWaterMarkRef.current) return
+
+        // 3. Higher minimum score threshold to reduce false matches
+        const minScore = 0.35
+
+        // 4. Don't jump more than 6 lines at once unless score is very high
+        const jumpSize = idx - current
+        if (jumpSize > 6 && score < 0.5) return
+
+        if (idx >= 0 && score >= minScore && idx >= current) {
+          currentLineRef.current = idx
+          highWaterMarkRef.current = Math.max(highWaterMarkRef.current, idx)
+          setCurrentLineIndex(idx)
+          lastMatchTimeRef.current = now
+          lastScrollTimeRef.current = now
         }
       }
     }
@@ -281,6 +309,8 @@ export function useSpeechRecognition(lyricsLines = []) {
 
   const reset = useCallback(() => {
     currentLineRef.current = 0
+    highWaterMarkRef.current = 0
+    lastScrollTimeRef.current = 0
     setCurrentLineIndex(0)
     setConfidence(0)
     transcriptBufferRef.current = ''

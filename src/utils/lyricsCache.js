@@ -101,6 +101,40 @@ export async function getCacheCount() {
 }
 
 /**
+ * Get all cached songs (for library browsing).
+ * Returns array of { artist, title, lyrics, savedAt }.
+ */
+export async function getAllCachedSongs() {
+  try {
+    const db = await openDB()
+    const tx = db.transaction(STORE_NAME, 'readonly')
+    const store = tx.objectStore(STORE_NAME)
+
+    return new Promise((resolve) => {
+      const request = store.getAll()
+      request.onsuccess = () => resolve(request.result || [])
+      request.onerror = () => resolve([])
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Search cached songs by partial title or artist match.
+ * Returns matching entries from the library.
+ */
+export async function searchCachedSongs(query) {
+  const all = await getAllCachedSongs()
+  if (!query) return all
+  const q = query.toLowerCase().trim()
+  return all.filter(s =>
+    s.title.toLowerCase().includes(q) ||
+    s.artist.toLowerCase().includes(q)
+  )
+}
+
+/**
  * Clear entire lyrics cache.
  */
 export async function clearCache() {
