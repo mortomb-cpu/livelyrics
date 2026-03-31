@@ -87,7 +87,8 @@ html, body { height: 100%; overflow: hidden; background: #000; color: #e2e8f0; f
 .section { margin-bottom: 32px; }
 .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: rgba(129,140,248,0.5); margin-bottom: 8px; font-weight: 600; }
 .line { line-height: 1.6; color: #e2e8f0; transition: all 0.3s; }
-.line.active { color: #fff; transform: scale(1.04); transform-origin: left; text-shadow: 0 0 20px rgba(129,140,248,0.4); }
+.line.active { color: #fff; transform: scale(1.05); transform-origin: left; text-shadow: 0 0 30px rgba(129,140,248,0.6); background: rgba(129,140,248,0.08); margin: 2px -8px; padding: 2px 8px; border-radius: 4px; }
+.line.dimmed { color: #475569; }
 .spacer { height: 50vh; }
 .no-lyrics { text-align: center; color: #64748b; font-size: 18px; margin-top: 64px; }
 
@@ -180,26 +181,28 @@ function updateActiveLine() {
   // Remove highlight from previous line
   if (prevActiveLineId) {
     var prev = document.getElementById(prevActiveLineId);
-    if (prev) prev.classList.remove('active');
+    if (prev) { prev.classList.remove('active'); prev.classList.add('dimmed'); }
   }
-  // Add highlight to current line
+  // Add highlight to current line + dim all others
   var sections = splitSections(getCurrentSong().lyrics);
   var count = 0;
   for (var si = 0; si < sections.length; si++) {
     for (var li = 0; li < sections[si].lines.length; li++) {
+      var id = 'line-' + si + '-' + li;
+      var el = document.getElementById(id);
       if (count === currentLineIndex) {
-        var id = 'line-' + si + '-' + li;
-        var el = document.getElementById(id);
         if (el) {
           el.classList.add('active');
+          el.classList.remove('dimmed');
           prevActiveLineId = id;
-          // Debounced scroll — wait for previous scroll to settle
           if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
           scrollDebounceTimer = setTimeout(function() {
             smoothScrollToLine(el);
           }, 150);
         }
-        return;
+      } else if (el && (voiceEnabled || cloudVoiceEnabled || timedEnabled)) {
+        // Dim non-active lines when any tracking mode is on
+        el.classList.add('dimmed');
       }
       count++;
     }
