@@ -484,7 +484,6 @@ export default function PerformView({ songs, allSongs = [] }) {
               >
                 {cloudVoiceEnabled ? (cloudConnected ? '☁ Cloud' : '☁ ...') : '☁ Cloud'}
               </button>
-              )}
 
               {/* Auto-scroll toggle */}
               <button
