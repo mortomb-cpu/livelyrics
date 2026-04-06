@@ -119,8 +119,8 @@ export function useDeepgramRecognition(lyricsLines = []) {
     if (idx < highWaterMarkRef.current) return
     const jumpSize = idx - currentLineRef.current
     if (jumpSize > 6 && score < 0.5) return
-    // Higher threshold for cloud — 0.45 instead of 0.35
-    if (idx >= 0 && score >= 0.30 && idx >= currentLineRef.current) {
+    // Higher threshold for cloud — more accurate so fewer false positives
+    if (idx >= 0 && score >= 0.40 && idx >= currentLineRef.current) {
       currentLineRef.current = idx
       highWaterMarkRef.current = Math.max(highWaterMarkRef.current, idx)
       setCurrentLineIndex(idx)
@@ -181,81 +181,56 @@ export function useDeepgramRecognition(lyricsLines = []) {
 
           const source = audioContext.createMediaStreamSource(stream)
 
-          // === VOCAL ISOLATION FILTERS ===
-          // noiseSuppression is OFF so we get raw audio — filters work on real signal
-
-          // Steep high-pass at 300Hz — aggressively cuts kick, bass, low rumble
-          const hp1 = audioContext.createBiquadFilter()
-          hp1.type = 'highpass'; hp1.frequency.value = 300; hp1.Q.value = 1.0
-          // Second high-pass for steeper rolloff
-          const hp2 = audioContext.createBiquadFilter()
-          hp2.type = 'highpass'; hp2.frequency.value = 300; hp2.Q.value = 1.0
-
-          // Low-pass at 3500Hz — cuts cymbals, hi-hats, guitar harmonics
-          const lp = audioContext.createBiquadFilter()
-          lp.type = 'lowpass'; lp.frequency.value = 3500; lp.Q.value = 0.7
-
-          // Notch filters to cut common instrument frequencies
-          // Snare drum body ~200Hz (already cut by HP)
-          // Guitar fundamental ~300-600Hz (overlaps with voice, can't cut too much)
-
-          // Vocal presence boost +8dB at 2kHz — where voice intelligibility lives
-          const vocalBoost = audioContext.createBiquadFilter()
-          vocalBoost.type = 'peaking'; vocalBoost.frequency.value = 2000; vocalBoost.gain.value = 8; vocalBoost.Q.value = 1.5
-
-          // Vocal formant boost +6dB at 1kHz
-          const formantBoost = audioContext.createBiquadFilter()
-          formantBoost.type = 'peaking'; formantBoost.frequency.value = 1000; formantBoost.gain.value = 6; formantBoost.Q.value = 1.0
-
-          // Compressor — squash dynamic range so quiet words aren't lost
-          const compressor = audioContext.createDynamicsCompressor()
-          compressor.threshold.value = -40; compressor.knee.value = 10
-          compressor.ratio.value = 8; compressor.attack.value = 0.002; compressor.release.value = 0.05
-
-          // Gain boost
-          const gain = audioContext.createGain()
-          gain.gain.value = 3.0
-
-          // Chain: source → HP → HP → LP → vocalBoost → formant → compressor → gain → processor
-          source.connect(hp1)
-          hp1.connect(hp2)
-          hp2.connect(lp)
-          lp.connect(vocalBoost)
-          vocalBoost.connect(formantBoost)
-          formantBoost.connect(compressor)
-          compressor.connect(gain)
+          // Light vocal filter — gentle high-pass to cut low rumble without
+          // destroying the signal. Deepgram Nova-2 handles noise well on its own.
+          const hp = audioContext.createBiquadFilter()
+          hp.type = 'highpass'; hp.frequency.value = 150; hp.Q.value = 0.7
 
           const processor = audioContext.createScriptProcessor(4096, 1, 1)
           processorRef.current = processor
 
           const ctxRate = audioContext.sampleRate
+          // Pre-allocate resampling buffers to avoid GC pressure every frame
+          const ratio16k = 16000 / ctxRate
+          const resampleLen = Math.round(4096 * ratio16k)
+          const resampleBuf = ctxRate !== 16000 ? new Float32Array(resampleLen) : null
+          const int16Buf = new Int16Array(resampleLen || 4096)
+
           processor.onaudioprocess = (e) => {
             if (ws.readyState !== WebSocket.OPEN) return
             const input = e.inputBuffer.getChannelData(0)
 
             let samples = input
-            if (ctxRate !== 16000) {
-              const ratio = 16000 / ctxRate
-              const newLen = Math.round(input.length * ratio)
-              samples = new Float32Array(newLen)
-              for (let i = 0; i < newLen; i++) {
-                const srcIdx = i / ratio
-                const lo = Math.floor(srcIdx)
+            let len = input.length
+            if (resampleBuf) {
+              const outLen = Math.round(input.length * ratio16k)
+              for (let i = 0; i < outLen; i++) {
+                const srcIdx = i / ratio16k
+                const lo = srcIdx | 0
                 const hi = Math.min(lo + 1, input.length - 1)
                 const frac = srcIdx - lo
-                samples[i] = input[lo] * (1 - frac) + input[hi] * frac
+                resampleBuf[i] = input[lo] * (1 - frac) + input[hi] * frac
               }
+              samples = resampleBuf
+              len = outLen
             }
 
-            const int16 = new Int16Array(samples.length)
-            for (let i = 0; i < samples.length; i++) {
-              int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)))
+            for (let i = 0; i < len; i++) {
+              int16Buf[i] = Math.max(-32768, Math.min(32767, (samples[i] * 32767 + 0.5) | 0))
             }
-            ws.send(int16.buffer)
+            ws.send(int16Buf.buffer.slice(0, len * 2))
           }
 
-          gain.connect(processor)
-          processor.connect(audioContext.destination)
+          // Chain: source → gentle HP → processor → silent output
+          // Use a zero-gain node so processor fires but audio doesn't play
+          // back through speakers (prevents feedback during live performance)
+          const silencer = audioContext.createGain()
+          silencer.gain.value = 0
+
+          source.connect(hp)
+          hp.connect(processor)
+          processor.connect(silencer)
+          silencer.connect(audioContext.destination)
         } catch (audioErr) {
           console.error('[deepgram] Audio setup failed:', audioErr)
         }
@@ -274,7 +249,7 @@ export function useDeepgramRecognition(lyricsLines = []) {
               processTranscript(text, isFinal, dgConf)
             }
           }
-        } catch (e) {}
+        } catch (e) { console.warn('[deepgram] Failed to parse message:', e) }
       }
 
       ws.onerror = (e) => {
