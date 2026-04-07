@@ -826,6 +826,34 @@ setInterval(function() {
   }
 }, 5000);
 
+// Layer 3: Continuous DOM activity via requestAnimationFrame
+// Some WebViews detect "idle" pages and dim the screen. Keep the page
+// "busy" by updating an invisible counter every frame.
+var activityCounter = 0;
+var activityEl = document.createElement('div');
+activityEl.style.cssText = 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px;';
+document.body.appendChild(activityEl);
+function keepActive() {
+  activityCounter++;
+  activityEl.textContent = String(activityCounter);
+  requestAnimationFrame(keepActive);
+}
+requestAnimationFrame(keepActive);
+
+// Layer 4: Show a banner if wake lock failed (so user knows to disable screen timeout)
+setTimeout(function() {
+  if (!wakeLock && !noSleepEnabled) {
+    var banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#92400e;color:#fff;padding:8px 16px;font-size:12px;text-align:center;z-index:999;';
+    banner.textContent = 'Tap screen to enable "always on" mode. If screen still dims, set device screen timeout to "Never".';
+    document.body.appendChild(banner);
+    setTimeout(function() {
+      banner.addEventListener('click', function() { banner.remove(); });
+      setTimeout(function() { if (banner.parentNode) banner.remove(); }, 8000);
+    }, 100);
+  }
+}, 3000);
+
 // ============ START ============
 render();
 </script>
