@@ -379,8 +379,18 @@ function resetScrollState() {
 }
 
 function handleTap(e) {
-  if (autoScrollEnabled) { autoScrollPaused = !autoScrollPaused; render(); return; }
-  if (!voiceEnabled && !timedEnabled) {
+  if (autoScrollEnabled) {
+    // Preserve scroll position across render
+    var lyricsEl = document.getElementById('lyrics');
+    var savedScroll = lyricsEl ? lyricsEl.scrollTop : 0;
+    autoScrollPaused = !autoScrollPaused;
+    render();
+    // Restore scroll position after render rebuilds the DOM
+    var newLyrics = document.getElementById('lyrics');
+    if (newLyrics) newLyrics.scrollTop = savedScroll;
+    return;
+  }
+  if (!voiceEnabled && !timedEnabled && !cloudVoiceEnabled) {
     var el = document.getElementById('lyrics');
     if (el) el.scrollBy({ top: window.innerHeight * 0.7, behavior: 'smooth' });
   }
@@ -514,13 +524,21 @@ function toggleCloudVoice() {
   render();
 }
 
+var dgRecorder = null;
+
 async function startCloudVoice() {
   try {
+    // Use browser's native noise suppression - it's the best we have on tablets
     dgStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true }
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
     });
 
-    // Build keywords from current song lyrics for Deepgram boost
+    // Build keywords from current song lyrics
     var song = getCurrentSong();
     var kw = [];
     if (song && song.lyrics) {
@@ -532,64 +550,32 @@ async function startCloudVoice() {
     }
     var kwParam = kw.length > 0 ? '&keywords=' + kw.map(function(w){return encodeURIComponent(w+':2')}).join('&keywords=') : '';
 
+    // Use opus encoding — Deepgram handles it natively, no resampling needed
+    // This is the approach Deepgram's official examples use
     dgWs = new WebSocket(
-      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true&encoding=linear16&sample_rate=16000&channels=1' + kwParam,
+      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true&encoding=opus' + kwParam,
       ['token', DEEPGRAM_KEY]
     );
 
-    dgWs.onopen = async function() {
+    dgWs.onopen = function() {
       cloudConnected = true; render();
       try {
-        dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (dgAudioCtx.state === 'suspended') await dgAudioCtx.resume();
+        // MediaRecorder with opus — browser handles all the encoding
+        var mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/webm';
+        }
+        dgRecorder = new MediaRecorder(dgStream, { mimeType: mimeType, audioBitsPerSecond: 32000 });
 
-        var source = dgAudioCtx.createMediaStreamSource(dgStream);
-
-        // Vocal isolation filters (noiseSuppression is OFF so raw audio comes through)
-        var hp1 = dgAudioCtx.createBiquadFilter();
-        hp1.type = 'highpass'; hp1.frequency.value = 300; hp1.Q.value = 1.0;
-        var hp2 = dgAudioCtx.createBiquadFilter();
-        hp2.type = 'highpass'; hp2.frequency.value = 300; hp2.Q.value = 1.0;
-        var lp = dgAudioCtx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = 3500; lp.Q.value = 0.7;
-        var vb = dgAudioCtx.createBiquadFilter();
-        vb.type = 'peaking'; vb.frequency.value = 2000; vb.gain.value = 8; vb.Q.value = 1.5;
-        var fb = dgAudioCtx.createBiquadFilter();
-        fb.type = 'peaking'; fb.frequency.value = 1000; fb.gain.value = 6; fb.Q.value = 1.0;
-        var comp = dgAudioCtx.createDynamicsCompressor();
-        comp.threshold.value = -40; comp.knee.value = 10; comp.ratio.value = 8;
-        comp.attack.value = 0.002; comp.release.value = 0.05;
-        var gn = dgAudioCtx.createGain();
-        gn.gain.value = 3.0;
-
-        source.connect(hp1); hp1.connect(hp2); hp2.connect(lp);
-        lp.connect(vb); vb.connect(fb); fb.connect(comp); comp.connect(gn);
-
-        dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
-        var ctxRate = dgAudioCtx.sampleRate;
-        dgProcessor.onaudioprocess = function(e) {
-          if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
-          var input = e.inputBuffer.getChannelData(0);
-          var samples = input;
-          if (ctxRate !== 16000) {
-            var ratio = 16000 / ctxRate;
-            var newLen = Math.round(input.length * ratio);
-            samples = new Float32Array(newLen);
-            for (var i = 0; i < newLen; i++) {
-              var srcIdx = i / ratio;
-              var lo = Math.floor(srcIdx);
-              var hi = Math.min(lo + 1, input.length - 1);
-              var frac = srcIdx - lo;
-              samples[i] = input[lo] * (1 - frac) + input[hi] * frac;
-            }
+        dgRecorder.ondataavailable = function(e) {
+          if (dgWs && dgWs.readyState === WebSocket.OPEN && e.data.size > 0) {
+            dgWs.send(e.data);
           }
-          var int16 = new Int16Array(samples.length);
-          for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
-          dgWs.send(int16.buffer);
         };
-        gn.connect(dgProcessor);
-        dgProcessor.connect(dgAudioCtx.destination);
-      } catch(err) { console.error('[cloud] Audio setup failed:', err); }
+
+        // Send data every 250ms for low latency
+        dgRecorder.start(250);
+      } catch(err) { console.error('[cloud] Recorder setup failed:', err); }
     };
 
     dgWs.onmessage = function(event) {
@@ -662,9 +648,8 @@ function processCloudTranscript(text, isFinal, dgConf) {
 }
 
 function stopCloudVoice() {
+  if (dgRecorder) { try { dgRecorder.stop(); } catch(e) {} dgRecorder = null; }
   if (dgWs) { dgWs.close(); dgWs = null; }
-  if (dgProcessor) { dgProcessor.disconnect(); dgProcessor = null; }
-  if (dgAudioCtx) { dgAudioCtx.close(); dgAudioCtx = null; }
   if (dgStream) { dgStream.getTracks().forEach(function(t){t.stop();}); dgStream = null; }
   isCloudListening = false; cloudConnected = false;
   stopDrift(); transcriptBuffer = '';
@@ -758,53 +743,74 @@ document.addEventListener('visibilitychange', function() {
 });
 setInterval(function() { if (!wakeLock) requestWakeLock(); }, 30000);
 
-// Layer 2: Silent video loop — works on ALL devices as a fallback
-// This is the NoSleep.js technique used by production apps
-// We ALWAYS enable this regardless of Wake Lock support for maximum reliability
-(function() {
+// Layer 2: Silent video loop — NoSleep.js technique for tablets
+// Uses a real encoded video file (not canvas) which is more reliable
+var nosleepVid = null;
+function startNoSleepVideo() {
+  if (nosleepVid) return;
   try {
+    nosleepVid = document.createElement('video');
+    nosleepVid.setAttribute('playsinline', '');
+    nosleepVid.setAttribute('webkit-playsinline', '');
+    nosleepVid.setAttribute('muted', '');
+    nosleepVid.muted = true;
+    nosleepVid.setAttribute('loop', '');
+    nosleepVid.setAttribute('title', 'LiveLyrics');
+    nosleepVid.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
+
+    // Use canvas stream if possible (more reliable than data URIs)
     var canvas = document.createElement('canvas');
     canvas.width = 2; canvas.height = 2;
     var ctx = canvas.getContext('2d');
     ctx.fillRect(0, 0, 2, 2);
 
-    var vid = document.createElement('video');
-    vid.setAttribute('playsinline', '');
-    vid.setAttribute('webkit-playsinline', '');
-    vid.setAttribute('muted', '');
-    vid.muted = true;
-    vid.setAttribute('loop', '');
-    vid.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
-
-    // Create a minimal video stream from canvas
     if (canvas.captureStream) {
-      var stream = canvas.captureStream(0);
-      vid.srcObject = stream;
+      var stream = canvas.captureStream(15);
+      nosleepVid.srcObject = stream;
+      // Draw periodically to keep the stream active
+      setInterval(function() {
+        ctx.fillStyle = '#' + Math.floor(Math.random()*16777215).toString(16);
+        ctx.fillRect(0, 0, 2, 2);
+      }, 1000);
     } else {
-      // Fallback: tiny webm data URI
-      vid.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAhtZGF0AAAA0m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAYaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAAAAAAGQbWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAAUHN0YmwAAACgc3RzZAAAAAAAAAABAAAAkGF2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAACAAIASAAAAEgAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAADJhdmNDAWQACv/hABlnZAAKrNlCjfkhAAADAAEAAAMAAg8SJZYBAAZo6+PLIsAAAAAYc3R0cwAAAAAAAAABAAAAAgAAA+gAAAAUc3RzcwAAAAAAAAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAAgAAAAEAAAAcc3RzegAAAAAAAAAAAAAAAgAAAAMAAAADAAAAFHN0Y28AAAAAAAAAAAEAAAA0';
+      // No canvas.captureStream support - skip
+      return;
     }
 
-    document.body.appendChild(vid);
+    document.body.appendChild(nosleepVid);
 
-    // Play immediately and on any user interaction
-    function playVid() { vid.play().catch(function(){}); }
+    function playVid() { if (nosleepVid) nosleepVid.play().catch(function(){}); }
     playVid();
-    document.addEventListener('click', playVid, { once: false });
-    document.addEventListener('touchstart', playVid, { once: false });
 
     // Re-play periodically in case it gets paused
     setInterval(function() {
-      if (vid.paused) playVid();
-    }, 10000);
+      if (nosleepVid && nosleepVid.paused) playVid();
+    }, 5000);
   } catch(e) {}
-})();
+}
+
+// Start NoSleep on first user interaction (required by browsers)
+var nosleepStarted = false;
+function initNoSleep() {
+  if (nosleepStarted) return;
+  nosleepStarted = true;
+  startNoSleepVideo();
+}
+document.addEventListener('click', initNoSleep, { once: true });
+document.addEventListener('touchstart', initNoSleep, { once: true });
+// Also try immediately (works on some browsers)
+startNoSleepVideo();
 
 // Layer 3: Prevent any sleep by touching the DOM periodically
 // Some Samsung tablets detect "idle" pages and dim them
 setInterval(function() {
-  document.title = document.title; // minimal DOM touch to signal activity
-}, 15000);
+  document.title = document.title;
+  // Force a tiny DOM change to keep Samsung from detecting inactivity
+  var p = document.createElement('span');
+  p.style.display = 'none';
+  document.body.appendChild(p);
+  setTimeout(function() { if (p.parentNode) p.parentNode.removeChild(p); }, 100);
+}, 10000);
 
 // ============ START ============
 render();
