@@ -527,15 +527,20 @@ function toggleCloudVoice() {
 
 async function startCloudVoice() {
   try {
-    // Browser's native noise suppression ON - tested to work
-    dgStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
+    // Try with simple constraint first (works on WhatsApp WebView)
+    try {
+      dgStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (simpleErr) {
+      // Fall back to detailed constraints
+      dgStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+    }
 
     // Build keywords from current song lyrics
     var song = getCurrentSong();
@@ -619,7 +624,14 @@ async function startCloudVoice() {
     render();
   } catch(e) {
     console.error('[cloud] Start failed:', e);
-    alert('Failed to start Cloud mode: ' + e.message);
+    // Specific handling for permission errors - common on WhatsApp WebView
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError' || /permission/i.test(e.message || '')) {
+      alert('Microphone access denied.\\n\\nIf you opened this file from WhatsApp or another app, the WebView cannot access the mic.\\n\\nFIX: Long-press the file and choose "Open with Chrome" or share it to Chrome directly.');
+    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+      alert('No microphone found on this device.');
+    } else {
+      alert('Cloud mode error: ' + (e.message || e.name || 'unknown'));
+    }
     cloudVoiceEnabled = false;
     render();
   }
