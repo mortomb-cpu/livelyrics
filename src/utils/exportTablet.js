@@ -525,11 +525,9 @@ function toggleCloudVoice() {
   render();
 }
 
-var dgRecorder = null;
-
 async function startCloudVoice() {
   try {
-    // Use browser's native noise suppression - it's the best we have on tablets
+    // Browser's native noise suppression ON - tested to work
     dgStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -551,33 +549,44 @@ async function startCloudVoice() {
     }
     var kwParam = kw.length > 0 ? '&keywords=' + kw.map(function(w){return encodeURIComponent(w+':2')}).join('&keywords=') : '';
 
-    // Use opus encoding — Deepgram handles it natively, no resampling needed
-    // This is the approach Deepgram's official examples use
-    // NO encoding parameter — let Deepgram auto-detect from the webm container
+    // Raw PCM (linear16) at 16kHz — this approach is proven to work
     dgWs = new WebSocket(
-      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true' + kwParam,
+      'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1500&vad_events=true&encoding=linear16&sample_rate=16000&channels=1' + kwParam,
       ['token', DEEPGRAM_KEY]
     );
 
-    dgWs.onopen = function() {
+    dgWs.onopen = async function() {
+      console.log('[cloud] WebSocket opened');
       cloudConnected = true; render();
       try {
-        // MediaRecorder with opus — browser handles all the encoding
-        var mimeType = 'audio/webm;codecs=opus';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'audio/webm';
-        }
-        dgRecorder = new MediaRecorder(dgStream, { mimeType: mimeType, audioBitsPerSecond: 32000 });
-
-        dgRecorder.ondataavailable = function(e) {
-          if (dgWs && dgWs.readyState === WebSocket.OPEN && e.data.size > 0) {
-            dgWs.send(e.data);
+        dgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (dgAudioCtx.state === 'suspended') await dgAudioCtx.resume();
+        var source = dgAudioCtx.createMediaStreamSource(dgStream);
+        dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
+        var ctxRate = dgAudioCtx.sampleRate;
+        dgProcessor.onaudioprocess = function(e) {
+          if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
+          var input = e.inputBuffer.getChannelData(0);
+          var samples = input;
+          if (ctxRate !== 16000) {
+            var ratio = 16000 / ctxRate;
+            var newLen = Math.round(input.length * ratio);
+            samples = new Float32Array(newLen);
+            for (var i = 0; i < newLen; i++) {
+              var srcIdx = i / ratio;
+              var lo = Math.floor(srcIdx);
+              var hi = Math.min(lo + 1, input.length - 1);
+              var frac = srcIdx - lo;
+              samples[i] = input[lo] * (1 - frac) + input[hi] * frac;
+            }
           }
+          var int16 = new Int16Array(samples.length);
+          for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+          dgWs.send(int16.buffer);
         };
-
-        // Send data every 250ms for low latency
-        dgRecorder.start(250);
-      } catch(err) { console.error('[cloud] Recorder setup failed:', err); }
+        source.connect(dgProcessor);
+        dgProcessor.connect(dgAudioCtx.destination);
+      } catch(err) { console.error('[cloud] Audio setup failed:', err); }
     };
 
     dgWs.onmessage = function(event) {
@@ -594,27 +603,25 @@ async function startCloudVoice() {
 
     dgWs.onerror = function(err) {
       console.error('[cloud] WebSocket error:', err);
-      cloudConnected = false;
-      isCloudListening = false;
-      cloudVoiceEnabled = false;
-      render();
     };
     dgWs.onclose = function(event) {
       console.log('[cloud] WebSocket closed:', event.code, event.reason);
       cloudConnected = false;
-      isCloudListening = false;
-      // If it closes immediately, turn off cloud mode entirely
-      if (cloudVoiceEnabled && !isCloudListening) {
+      if (isCloudListening) {
+        // Only turn off if user didn't intentionally stop
         cloudVoiceEnabled = false;
+        isCloudListening = false;
       }
       render();
     };
 
     isCloudListening = true;
-    // NO drift for cloud mode — only scroll when Deepgram hears actual singing
     render();
   } catch(e) {
-    cloudVoiceEnabled = false; render();
+    console.error('[cloud] Start failed:', e);
+    alert('Failed to start Cloud mode: ' + e.message);
+    cloudVoiceEnabled = false;
+    render();
   }
 }
 
@@ -665,11 +672,16 @@ function processCloudTranscript(text, isFinal, dgConf) {
 }
 
 function stopCloudVoice() {
-  if (dgRecorder) { try { dgRecorder.stop(); } catch(e) {} dgRecorder = null; }
-  if (dgWs) { dgWs.close(); dgWs = null; }
-  if (dgStream) { dgStream.getTracks().forEach(function(t){t.stop();}); dgStream = null; }
-  isCloudListening = false; cloudConnected = false;
-  stopDrift(); transcriptBuffer = '';
+  isCloudListening = false;
+  if (dgWs) {
+    try { dgWs.onclose = null; dgWs.close(); } catch(e) {}
+    dgWs = null;
+  }
+  if (dgProcessor) { try { dgProcessor.disconnect(); } catch(e) {} dgProcessor = null; }
+  if (dgAudioCtx) { try { dgAudioCtx.close(); } catch(e) {} dgAudioCtx = null; }
+  if (dgStream) { try { dgStream.getTracks().forEach(function(t){t.stop();}); } catch(e) {} dgStream = null; }
+  cloudConnected = false;
+  transcriptBuffer = '';
 }
 
 // ============ AUTO-SCROLL MODE ============
@@ -781,7 +793,9 @@ function enableNoSleep() {
     noSleepVideo.muted = true;
     noSleepVideo.volume = 0;
     noSleepVideo.src = WEBM_BASE64;
-    noSleepVideo.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+    // Tiny visible video at bottom-right corner (2px, barely visible)
+    // Needs opacity > 0 to prevent browser optimizing it away
+    noSleepVideo.style.cssText = 'position:fixed;bottom:0;right:0;width:3px;height:3px;opacity:0.02;pointer-events:none;z-index:99999;';
     document.body.appendChild(noSleepVideo);
   }
 
