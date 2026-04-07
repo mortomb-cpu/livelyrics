@@ -225,6 +225,10 @@ function smoothScrollToLine(el) {
 function render() {
   var song = getCurrentSong();
   if (!song) return;
+  // Preserve lyrics scroll position across re-renders so toggling
+  // buttons (e.g. pause) doesn't jump back to the top
+  var prevLyrics = document.getElementById('lyrics');
+  var savedScroll = prevLyrics ? prevLyrics.scrollTop : 0;
   var sections = splitSections(song.lyrics);
   allLines = [];
   for (var i = 0; i < sections.length; i++) for (var j = 0; j < sections[i].lines.length; j++) allLines.push(sections[i].lines[j]);
@@ -301,6 +305,10 @@ function render() {
     '</div>' +
     (showSetList ? renderSetListOverlay() : '') +
     (showLibrary ? renderLibraryOverlay() : '');
+
+  // Restore the lyrics scroll position
+  var newLyrics = document.getElementById('lyrics');
+  if (newLyrics && savedScroll) newLyrics.scrollTop = savedScroll;
 }
 
 // ============ OVERLAYS ============
@@ -323,18 +331,47 @@ function renderSetListOverlay() {
     '<div class="overlay-list"><div style="max-width:600px;margin:0 auto">' + items + '</div></div></div>';
 }
 
-function renderLibraryOverlay() {
-  var items = '';
-  for (var i = 0; i < LIBRARY.length; i++) {
-    var s = LIBRARY[i];
-    items += '<button class="lib-card" onclick="pickLibrarySong(' + i + ')">' +
+var librarySearch = '';
+var setListSearch = '';
+function filterLibrary() {
+  var q = librarySearch.trim().toLowerCase();
+  if (!q) return LIBRARY.map(function(s, i) { return { song: s, idx: i }; });
+  return LIBRARY.map(function(s, i) { return { song: s, idx: i }; }).filter(function(x) {
+    return x.song.title.toLowerCase().indexOf(q) !== -1 ||
+           (x.song.artist && x.song.artist.toLowerCase().indexOf(q) !== -1);
+  });
+}
+function onLibrarySearchInput(v) {
+  librarySearch = v;
+  var listEl = document.getElementById('library-list');
+  if (listEl) listEl.innerHTML = renderLibraryItems();
+}
+function renderLibraryItems() {
+  var matches = filterLibrary();
+  if (matches.length === 0) return '<p style="text-align:center;color:#64748b;padding:32px;grid-column:1/-1">No matching songs</p>';
+  var html = '';
+  for (var i = 0; i < matches.length; i++) {
+    var s = matches[i].song, idx = matches[i].idx;
+    html += '<button class="lib-card" onclick="pickLibrarySong(' + idx + ')">' +
       '<div class="overlay-title">' + esc(s.title) + '</div>' +
       (s.artist ? '<div class="overlay-artist">' + esc(s.artist) + '</div>' : '') + '</button>';
   }
-  if (items === '') items = '<p style="text-align:center;color:#64748b;padding:32px">No additional songs in library</p>';
+  return html;
+}
+function renderLibraryOverlay() {
+  if (LIBRARY.length === 0) {
+    return '<div class="overlay" onclick="event.stopPropagation()">' +
+      '<div class="overlay-header"><h2 style="color:#22d3ee">Song Library</h2><button class="overlay-close" onclick="showLibrary=false;render()">\\u2715</button></div>' +
+      '<div class="overlay-list"><p style="text-align:center;color:#64748b;padding:32px">No additional songs in library</p></div></div>';
+  }
   return '<div class="overlay" onclick="event.stopPropagation()">' +
     '<div class="overlay-header"><h2 style="color:#22d3ee">Song Library</h2><button class="overlay-close" onclick="showLibrary=false;render()">\\u2715</button></div>' +
-    '<div class="overlay-list"><div class="overlay-grid">' + items + '</div></div></div>';
+    '<div style="padding:8px 12px;border-bottom:1px solid #1e293b">' +
+      '<input id="library-search" type="text" placeholder="Search songs or artists..." value="' + esc(librarySearch) + '" ' +
+      'oninput="onLibrarySearchInput(this.value)" ' +
+      'style="width:100%;padding:10px 12px;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#fff;font-size:14px;outline:none" />' +
+    '</div>' +
+    '<div class="overlay-list"><div class="overlay-grid" id="library-list">' + renderLibraryItems() + '</div></div></div>';
 }
 
 // ============ NAVIGATION ============
@@ -545,50 +582,47 @@ async function startCloudVoice() {
 
         var source = dgAudioCtx.createMediaStreamSource(dgStream);
 
-        // Vocal isolation filters (noiseSuppression is OFF so raw audio comes through)
-        var hp1 = dgAudioCtx.createBiquadFilter();
-        hp1.type = 'highpass'; hp1.frequency.value = 300; hp1.Q.value = 1.0;
-        var hp2 = dgAudioCtx.createBiquadFilter();
-        hp2.type = 'highpass'; hp2.frequency.value = 300; hp2.Q.value = 1.0;
-        var lp = dgAudioCtx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = 3500; lp.Q.value = 0.7;
-        var vb = dgAudioCtx.createBiquadFilter();
-        vb.type = 'peaking'; vb.frequency.value = 2000; vb.gain.value = 8; vb.Q.value = 1.5;
-        var fb = dgAudioCtx.createBiquadFilter();
-        fb.type = 'peaking'; fb.frequency.value = 1000; fb.gain.value = 6; fb.Q.value = 1.0;
-        var comp = dgAudioCtx.createDynamicsCompressor();
-        comp.threshold.value = -40; comp.knee.value = 10; comp.ratio.value = 8;
-        comp.attack.value = 0.002; comp.release.value = 0.05;
-        var gn = dgAudioCtx.createGain();
-        gn.gain.value = 3.0;
-
-        source.connect(hp1); hp1.connect(hp2); hp2.connect(lp);
-        lp.connect(vb); vb.connect(fb); fb.connect(comp); comp.connect(gn);
+        // Light high-pass to cut low rumble. Deepgram Nova-2 handles noise itself.
+        var hp = dgAudioCtx.createBiquadFilter();
+        hp.type = 'highpass'; hp.frequency.value = 150; hp.Q.value = 0.7;
 
         dgProcessor = dgAudioCtx.createScriptProcessor(4096, 1, 1);
         var ctxRate = dgAudioCtx.sampleRate;
+        var ratio16k = 16000 / ctxRate;
+        var resampleLen = Math.round(4096 * ratio16k);
+        var resampleBuf = ctxRate !== 16000 ? new Float32Array(resampleLen) : null;
+        var int16Buf = new Int16Array(resampleLen || 4096);
+
         dgProcessor.onaudioprocess = function(e) {
           if (!dgWs || dgWs.readyState !== WebSocket.OPEN) return;
           var input = e.inputBuffer.getChannelData(0);
-          var samples = input;
-          if (ctxRate !== 16000) {
-            var ratio = 16000 / ctxRate;
-            var newLen = Math.round(input.length * ratio);
-            samples = new Float32Array(newLen);
-            for (var i = 0; i < newLen; i++) {
-              var srcIdx = i / ratio;
-              var lo = Math.floor(srcIdx);
+          var samples = input, len = input.length;
+          if (resampleBuf) {
+            var outLen = Math.round(input.length * ratio16k);
+            for (var i = 0; i < outLen; i++) {
+              var srcIdx = i / ratio16k;
+              var lo = srcIdx | 0;
               var hi = Math.min(lo + 1, input.length - 1);
               var frac = srcIdx - lo;
-              samples[i] = input[lo] * (1 - frac) + input[hi] * frac;
+              resampleBuf[i] = input[lo] * (1 - frac) + input[hi] * frac;
             }
+            samples = resampleBuf;
+            len = outLen;
           }
-          var int16 = new Int16Array(samples.length);
-          for (var i = 0; i < samples.length; i++) int16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
-          dgWs.send(int16.buffer);
+          for (var i = 0; i < len; i++) {
+            int16Buf[i] = Math.max(-32768, Math.min(32767, (samples[i] * 32767 + 0.5) | 0));
+          }
+          dgWs.send(int16Buf.buffer.slice(0, len * 2));
         };
-        gn.connect(dgProcessor);
-        dgProcessor.connect(dgAudioCtx.destination);
+
+        // Route through a zero-gain silencer so processor fires but
+        // mic audio doesn't loop back through speakers (feedback)
+        var silencer = dgAudioCtx.createGain();
+        silencer.gain.value = 0;
+        source.connect(hp);
+        hp.connect(dgProcessor);
+        dgProcessor.connect(silencer);
+        silencer.connect(dgAudioCtx.destination);
       } catch(err) { console.error('[cloud] Audio setup failed:', err); }
     };
 
@@ -601,10 +635,10 @@ async function startCloudVoice() {
           var dgConf = data.channel.alternatives[0].confidence || 0;
           if (text) processCloudTranscript(text, isFinal, dgConf);
         }
-      } catch(e) {}
+      } catch(e) { console.warn('[cloud] parse error:', e); }
     };
 
-    dgWs.onerror = function() { cloudConnected = false; render(); };
+    dgWs.onerror = function(err) { console.error('[cloud] WS error:', err); cloudConnected = false; render(); };
     dgWs.onclose = function() { cloudConnected = false; isCloudListening = false; render(); };
 
     isCloudListening = true;
@@ -653,8 +687,8 @@ function processCloudTranscript(text, isFinal, dgConf) {
   if (now - lastScrollTime < 800) return;
   if (bestIdx < highWaterMark) return;
   if (bestIdx - currentLineIndex > 6 && bestScore < 0.5) return;
-  // Higher threshold for cloud — 0.45 instead of 0.35
-  if (bestIdx >= 0 && bestScore >= 0.30 && bestIdx >= currentLineIndex) {
+  // Higher threshold for cloud — fewer false positives since DG is more accurate
+  if (bestIdx >= 0 && bestScore >= 0.40 && bestIdx >= currentLineIndex) {
     currentLineIndex = bestIdx; highWaterMark = Math.max(highWaterMark, bestIdx);
     lastMatchTime = now; lastScrollTime = now;
     updateActiveLine();
@@ -758,53 +792,62 @@ document.addEventListener('visibilitychange', function() {
 });
 setInterval(function() { if (!wakeLock) requestWakeLock(); }, 30000);
 
-// Layer 2: Silent video loop — works on ALL devices as a fallback
-// This is the NoSleep.js technique used by production apps
-// We ALWAYS enable this regardless of Wake Lock support for maximum reliability
+// Layer 2: Animated canvas → MediaStream → silent muted video.
+// A truly active video element prevents the OS/browser from dimming the
+// display. Canvas must produce actual frames (NOT 0fps), and the video must
+// be playing in the document for the screen-on heuristic to fire.
+var noSleepVid = null;
 (function() {
   try {
     var canvas = document.createElement('canvas');
-    canvas.width = 2; canvas.height = 2;
+    canvas.width = 16; canvas.height = 16;
     var ctx = canvas.getContext('2d');
-    ctx.fillRect(0, 0, 2, 2);
 
-    var vid = document.createElement('video');
-    vid.setAttribute('playsinline', '');
-    vid.setAttribute('webkit-playsinline', '');
-    vid.setAttribute('muted', '');
-    vid.muted = true;
-    vid.setAttribute('loop', '');
-    vid.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
+    // Animate the canvas continuously so the stream produces real frames
+    var f = 0;
+    function paint() {
+      f = (f + 1) & 255;
+      ctx.fillStyle = 'rgb(' + f + ',0,0)';
+      ctx.fillRect(0, 0, 16, 16);
+      requestAnimationFrame(paint);
+    }
+    paint();
 
-    // Create a minimal video stream from canvas
+    noSleepVid = document.createElement('video');
+    noSleepVid.setAttribute('playsinline', '');
+    noSleepVid.setAttribute('webkit-playsinline', '');
+    noSleepVid.muted = true;
+    noSleepVid.setAttribute('muted', '');
+    noSleepVid.setAttribute('autoplay', '');
+    noSleepVid.loop = true;
+    noSleepVid.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
+
     if (canvas.captureStream) {
-      var stream = canvas.captureStream(0);
-      vid.srcObject = stream;
-    } else {
-      // Fallback: tiny webm data URI
-      vid.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAhtZGF0AAAA0m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAYaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAAAAAAGQbWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAAUHN0YmwAAACgc3RzZAAAAAAAAAABAAAAkGF2YzEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAACAAIASAAAAEgAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABj//wAAADJhdmNDAWQACv/hABlnZAAKrNlCjfkhAAADAAEAAAMAAg8SJZYBAAZo6+PLIsAAAAAYc3R0cwAAAAAAAAABAAAAAgAAA+gAAAAUc3RzcwAAAAAAAAABAAAAAQAAABxzdHNjAAAAAAAAAAEAAAABAAAAAgAAAAEAAAAcc3RzegAAAAAAAAAAAAAAAgAAAAMAAAADAAAAFHN0Y28AAAAAAAAAAAEAAAA0';
+      noSleepVid.srcObject = canvas.captureStream(30); // 30 fps real frames
     }
 
-    document.body.appendChild(vid);
+    document.body.appendChild(noSleepVid);
 
-    // Play immediately and on any user interaction
-    function playVid() { vid.play().catch(function(){}); }
+    function playVid() {
+      var p = noSleepVid.play();
+      if (p && p.catch) p.catch(function(){});
+    }
     playVid();
-    document.addEventListener('click', playVid, { once: false });
-    document.addEventListener('touchstart', playVid, { once: false });
-
-    // Re-play periodically in case it gets paused
-    setInterval(function() {
-      if (vid.paused) playVid();
-    }, 10000);
-  } catch(e) {}
+    // Resume on any user interaction (browsers often need a gesture)
+    document.addEventListener('click', playVid);
+    document.addEventListener('touchstart', playVid);
+    document.addEventListener('touchend', playVid);
+    // Re-play if it gets paused
+    setInterval(function() { if (noSleepVid.paused) playVid(); }, 5000);
+  } catch(e) { console.warn('[wakelock] video fallback failed:', e); }
 })();
 
-// Layer 3: Prevent any sleep by touching the DOM periodically
-// Some Samsung tablets detect "idle" pages and dim them
+// Layer 3: Periodic activity ping — some Android tablets dim "idle" pages
 setInterval(function() {
-  document.title = document.title; // minimal DOM touch to signal activity
-}, 15000);
+  // Touch the DOM and document.title — both signal activity to power managers
+  document.title = document.title;
+  if (noSleepVid && noSleepVid.paused) { try { noSleepVid.play(); } catch(e) {} }
+}, 10000);
 
 // ============ START ============
 render();

@@ -10,6 +10,7 @@ export default function PerformView({ songs, allSongs = [] }) {
   const [fontSize, setFontSize] = useState(32)
   const [showControls, setShowControls] = useState(true)
   const [showLibrary, setShowLibrary] = useState(false)
+  const [librarySearch, setLibrarySearch] = useState('')
   const [showSetList, setShowSetList] = useState(false)
   const [librarySong, setLibrarySong] = useState(null) // temporarily performing a library song
   const [savedSetIdx, setSavedSetIdx] = useState(null) // where we were in the set before library pick
@@ -85,8 +86,50 @@ export default function PerformView({ songs, allSongs = [] }) {
     }
     document.addEventListener('visibilitychange', onVisibility)
 
+    // Periodic wake lock re-acquire (some devices drop it silently)
+    const wakeRetry = setInterval(() => {
+      if (!wakeLockRef.current) requestWakeLock()
+    }, 30000)
+
+    // Video-based fallback: animated canvas → MediaStream → muted video.
+    // Real frames keep the screen-on heuristic firing on devices where
+    // the Wake Lock API is unsupported or unreliable.
+    let noSleepVid = null
+    let rafId = null
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = 16; canvas.height = 16
+      const cctx = canvas.getContext('2d')
+      let frame = 0
+      const paint = () => {
+        frame = (frame + 1) & 255
+        cctx.fillStyle = `rgb(${frame},0,0)`
+        cctx.fillRect(0, 0, 16, 16)
+        rafId = requestAnimationFrame(paint)
+      }
+      paint()
+
+      noSleepVid = document.createElement('video')
+      noSleepVid.setAttribute('playsinline', '')
+      noSleepVid.setAttribute('webkit-playsinline', '')
+      noSleepVid.muted = true
+      noSleepVid.setAttribute('muted', '')
+      noSleepVid.setAttribute('autoplay', '')
+      noSleepVid.loop = true
+      noSleepVid.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;'
+      if (canvas.captureStream) noSleepVid.srcObject = canvas.captureStream(30)
+      document.body.appendChild(noSleepVid)
+      const playVid = () => { const p = noSleepVid.play(); if (p && p.catch) p.catch(() => {}) }
+      playVid()
+      document.addEventListener('click', playVid)
+      document.addEventListener('touchstart', playVid)
+    } catch (e) {}
+
     return () => {
       wakeLockRef.current?.release()
+      clearInterval(wakeRetry)
+      if (rafId) cancelAnimationFrame(rafId)
+      if (noSleepVid && noSleepVid.parentNode) noSleepVid.parentNode.removeChild(noSleepVid)
       document.removeEventListener('visibilitychange', onVisibility)
       if (document.fullscreenElement || document.webkitFullscreenElement) {
         (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
@@ -748,11 +791,29 @@ export default function PerformView({ songs, allSongs = [] }) {
             </button>
           </div>
 
+          {/* Search */}
+          <div className="px-4 py-3 border-b border-slate-800 shrink-0">
+            <input
+              type="text"
+              value={librarySearch}
+              onChange={e => setLibrarySearch(e.target.value)}
+              placeholder="Search songs or artists..."
+              autoFocus
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white text-sm placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+
           {/* Song list — alphabetically sorted, only songs with lyrics */}
           <div className="flex-1 overflow-y-auto px-2 py-2">
             <div className="max-w-2xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-1">
               {allSongs
                 .filter(s => s.lyrics && s.lyrics.length > 0 && !songs.some(ss => ss.id === s.id))
+                .filter(s => {
+                  const q = librarySearch.trim().toLowerCase()
+                  if (!q) return true
+                  return s.title.toLowerCase().includes(q) ||
+                         (s.artist && s.artist.toLowerCase().includes(q))
+                })
                 .sort((a, b) => a.title.localeCompare(b.title))
                 .map(song => (
                     <button
@@ -763,6 +824,7 @@ export default function PerformView({ songs, allSongs = [] }) {
                         }
                         setLibrarySong({ ...song, setName: 'Library' })
                         setShowLibrary(false)
+                        setLibrarySearch('')
                         resetRecognition(); resetCloud()
                         if (lyricsContainerRef.current) lyricsContainerRef.current.scrollTop = 0
                       }}
