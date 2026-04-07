@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import { parseFile } from '../utils/fileParser'
 import { exportForTablet } from '../utils/exportTablet'
+import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
 import { fetchAllLyrics } from '../utils/lyricsService'
 import { getCacheCount, getCachedLyrics } from '../utils/lyricsCache'
 import SongCard from './SongCard'
@@ -25,6 +26,10 @@ export default function SetListView({
   const [error, setError] = useState('')
   const [cachedCount, setCachedCount] = useState(0)
   const [showEncore, setShowEncore] = useState(true)
+  const [publishDialog, setPublishDialog] = useState(null) // null | 'token' | 'publishing' | 'success' | 'error'
+  const [publishError, setPublishError] = useState('')
+  const [publishURL, setPublishURL] = useState('')
+  const [githubToken, setGithubToken] = useState(getStoredToken())
   const fetchAbortRef = useRef(null)
 
   useEffect(() => {
@@ -188,6 +193,45 @@ export default function SetListView({
     setFetchProgress(null)
   }
 
+  const handlePublishToCloud = async () => {
+    const token = getStoredToken()
+    if (!token) {
+      setPublishDialog('token')
+      return
+    }
+    setPublishDialog('publishing')
+    setPublishError('')
+    try {
+      const ordered = [
+        ...sets.flatMap((set, si) =>
+          set.songIds.map(id => {
+            const s = songs.find(x => x.id === id)
+            return s ? { ...s, setName: set.name, setIndex: si } : null
+          }).filter(Boolean)
+        ),
+        ...encoreSongIds.map(id => {
+          const s = songs.find(x => x.id === id)
+          return s ? { ...s, setName: 'Encore', setIndex: sets.length } : null
+        }).filter(Boolean)
+      ]
+      const url = await publishToCloud(ordered, songs, token)
+      setPublishURL(url)
+      setPublishDialog('success')
+    } catch (err) {
+      setPublishError(err.message)
+      setPublishDialog('error')
+    }
+  }
+
+  const handleSaveToken = () => {
+    if (githubToken) {
+      setStoredToken(githubToken)
+      setPublishDialog(null)
+      // Now trigger publish
+      setTimeout(() => handlePublishToCloud(), 100)
+    }
+  }
+
   const handleExportPDF = () => {
     const orderedSets = [
       ...sets.map((set) => ({
@@ -330,6 +374,13 @@ export default function SetListView({
                   title="Download standalone perform file for your tablet"
                 >
                   Send to Tablet
+                </button>
+                <button
+                  onClick={handlePublishToCloud}
+                  className="bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-cyan-900/20"
+                  title="Publish to cloud (HTTPS) so Cloud Voice & screen wake lock work on tablet"
+                >
+                  ☁ Publish
                 </button>
                 <button
                   onClick={() => navigate('/perform')}
@@ -706,6 +757,127 @@ export default function SetListView({
             }}
             onClose={() => setEditingSong(null)}
           />
+        )}
+
+        {/* Publish to Cloud dialog */}
+        {publishDialog && (
+          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-xl max-w-md w-full p-6 border border-slate-700">
+              {publishDialog === 'token' && (
+                <>
+                  <h2 className="text-lg font-bold text-cyan-400 mb-3">GitHub Token Required</h2>
+                  <p className="text-sm text-slate-300 mb-4">
+                    To publish to the cloud, you need a GitHub Personal Access Token.
+                  </p>
+                  <ol className="text-xs text-slate-400 space-y-1 mb-4 list-decimal list-inside">
+                    <li>Go to <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener" className="text-cyan-400 underline">github.com/settings/tokens/new</a></li>
+                    <li>Name: "LiveLyrics Publish"</li>
+                    <li>Select scope: <strong>repo</strong> (or just <strong>public_repo</strong>)</li>
+                    <li>Click "Generate token" and copy it</li>
+                  </ol>
+                  <input
+                    type="password"
+                    placeholder="Paste your token here"
+                    value={githubToken}
+                    onChange={e => setGithubToken(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm mb-3 focus:outline-none focus:border-cyan-500"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => setPublishDialog(null)}
+                      className="px-4 py-2 text-sm text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveToken}
+                      disabled={!githubToken}
+                      className="bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                    >
+                      Save & Publish
+                    </button>
+                  </div>
+                </>
+              )}
+              {publishDialog === 'publishing' && (
+                <div className="text-center py-4">
+                  <div className="text-cyan-400 text-lg font-bold mb-2">Publishing...</div>
+                  <p className="text-sm text-slate-400">Uploading to GitHub Pages</p>
+                  <div className="mt-4 w-full h-1 bg-slate-700 rounded overflow-hidden">
+                    <div className="h-full bg-cyan-500 animate-pulse w-full" />
+                  </div>
+                </div>
+              )}
+              {publishDialog === 'success' && (
+                <>
+                  <h2 className="text-lg font-bold text-emerald-400 mb-3">✓ Published!</h2>
+                  <p className="text-sm text-slate-300 mb-4">
+                    Your set list is live at this URL (may take 30-60 seconds to update):
+                  </p>
+                  <div className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 mb-4 break-all">
+                    <a href={publishURL} target="_blank" rel="noopener" className="text-cyan-400 text-sm font-mono">
+                      {publishURL}
+                    </a>
+                  </div>
+                  <div className="text-center mb-4">
+                    <p className="text-xs text-slate-400 mb-2">Scan on your tablet:</p>
+                    <img
+                      src={qrCodeSrc(publishURL)}
+                      alt="QR code"
+                      className="mx-auto bg-white p-2 rounded-lg"
+                      width="180"
+                      height="180"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-500 mb-4">
+                    <p className="font-semibold text-slate-400 mb-1">On your tablet:</p>
+                    <ol className="list-decimal list-inside space-y-0.5">
+                      <li>Open the URL in Chrome</li>
+                      <li>Tap the menu (⋮) → "Add to Home screen"</li>
+                      <li>Works offline after first load</li>
+                      <li>Mic & wake lock work because it's HTTPS</li>
+                    </ol>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(publishURL)
+                      }}
+                      className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-700 rounded-lg"
+                    >
+                      Copy URL
+                    </button>
+                    <button
+                      onClick={() => setPublishDialog(null)}
+                      className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              )}
+              {publishDialog === 'error' && (
+                <>
+                  <h2 className="text-lg font-bold text-red-400 mb-3">Publish Failed</h2>
+                  <p className="text-sm text-slate-300 mb-4">{publishError}</p>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => setPublishDialog('token')}
+                      className="px-4 py-2 text-sm text-slate-400 hover:text-white"
+                    >
+                      Change Token
+                    </button>
+                    <button
+                      onClick={() => setPublishDialog(null)}
+                      className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </DragDropContext>

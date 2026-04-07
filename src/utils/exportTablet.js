@@ -53,6 +53,8 @@ export function generateTabletHTML(songs, allSongs = []) {
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#000000">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <title>LiveLyrics - Perform</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -853,6 +855,13 @@ setTimeout(function() {
     }, 100);
   }
 }, 3000);
+
+// ============ PWA SERVICE WORKER ============
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('./sw.js').catch(function(){});
+  });
+}
 
 // ============ START ============
 render();
