@@ -42,6 +42,29 @@ export async function fetchLyrics(artist, title) {
 }
 
 /**
+ * Fetch lyrics with automatic retries. When many songs fetch at once the
+ * network/sources can briefly time out, which previously marked a perfectly
+ * findable song as "not found". Retrying a couple times with backoff catches
+ * these transient failures.
+ */
+async function fetchLyricsWithRetry(artist, title, abortSignal, attempts = 3) {
+  let lastErr
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (abortSignal?.aborted) throw new Error('Aborted')
+    try {
+      return await fetchLyrics(artist, title)
+    } catch (err) {
+      lastErr = err
+      if (attempt < attempts && !abortSignal?.aborted) {
+        // Backoff: 0.6s, then 1.2s — gives a busy source time to recover
+        await new Promise(r => setTimeout(r, 600 * attempt))
+      }
+    }
+  }
+  throw lastErr
+}
+
+/**
  * Fetch lyrics for multiple songs with progress callback.
  * Uses cache when available — cached songs are instant, no network needed.
  */
@@ -74,8 +97,10 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
     toFetchOnline.push(song)
   }
 
-  // Phase 2: fetch remaining songs in parallel batches of 3
-  const BATCH_SIZE = 3
+  // Phase 2: fetch remaining songs in small parallel batches. Kept low (2) so
+  // we don't fire ~6 requests/song × a big batch at once and saturate the
+  // connection, which was causing whole batches to time out together.
+  const BATCH_SIZE = 2
   for (let i = 0; i < toFetchOnline.length; i += BATCH_SIZE) {
     if (abortSignal?.aborted) break
     const batch = toFetchOnline.slice(i, i + BATCH_SIZE)
@@ -83,7 +108,7 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
     const batchResults = await Promise.allSettled(
       batch.map(async (song) => {
         onProgress?.(completed, songs.length, song.title, song._cachedLyrics ? 'syncing' : 'fetching')
-        const result = await fetchLyrics(song.artist, song.title)
+        const result = await fetchLyricsWithRetry(song.artist, song.title, abortSignal)
         return {
           id: song.id,
           lyrics: song._cachedLyrics ? song.lyrics : result.lyrics, // keep cached lyrics if we had them
