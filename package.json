@@ -19,6 +19,7 @@
     "concurrently": "^9.1.0",
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "jspdf": "^4.2.1",
     "mammoth": "^1.8.0",
     "pdfjs-dist": "^4.7.76",
     "react": "^18.3.1",
