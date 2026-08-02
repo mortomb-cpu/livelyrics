@@ -3,3 +3,6 @@ dist
 release
 .env
 *.local
+
+# OCR assets — copied from node_modules / downloaded by scripts/setup-ocr.mjs
+public/tesseract/

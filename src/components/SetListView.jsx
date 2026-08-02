@@ -25,6 +25,7 @@ export default function SetListView({
   const [manualTitle, setManualTitle] = useState('')
   const [manualArtist, setManualArtist] = useState('')
   const [error, setError] = useState('')
+  const [importStatus, setImportStatus] = useState('')
   const [cachedCount, setCachedCount] = useState(0)
   const [showEncore, setShowEncore] = useState(true)
   const [publishDialog, setPublishDialog] = useState(null) // null | 'token' | 'publishing' | 'success' | 'error'
@@ -41,9 +42,10 @@ export default function SetListView({
     const file = e.target.files[0]
     if (!file) return
     setError('')
+    setImportStatus('Reading file…')
 
     try {
-      const parsed = await parseFile(file)
+      const parsed = await parseFile(file, setImportStatus)
       if (parsed.length === 0) {
         setError('No songs found in file. Check the format and try again.')
         return
@@ -147,6 +149,8 @@ export default function SetListView({
       getCacheCount().then(setCachedCount)
     } catch (err) {
       setError(err.message)
+    } finally {
+      setImportStatus('')
     }
 
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -467,6 +471,16 @@ export default function SetListView({
             )}
           </div>
         </div>
+
+        {/* Import status — OCR on an image-only PDF takes a few seconds per page */}
+        {importStatus && (
+          <div className="max-w-2xl lg:max-w-[90rem] mx-auto px-4 mt-3">
+            <div className="p-3 bg-sky-900/40 border border-sky-700 rounded-lg text-sky-200 text-sm flex items-center gap-2">
+              <span className="inline-block w-3 h-3 border-2 border-sky-300 border-t-transparent rounded-full animate-spin" />
+              {importStatus}
+            </div>
+          </div>
+        )}
 
         {/* Error display */}
         {error && (

@@ -23,7 +23,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   Empty lines or lines with "Set X" / "---" mark set breaks
  */
 
-export async function parseFile(file) {
+export async function parseFile(file, onProgress) {
   const ext = file.name.split('.').pop().toLowerCase()
 
   if (['xlsx', 'xls', 'csv'].includes(ext)) {
@@ -31,7 +31,7 @@ export async function parseFile(file) {
   } else if (ext === 'docx') {
     return parseWord(file)
   } else if (ext === 'pdf') {
-    return parsePDF(file)
+    return parsePDF(file, onProgress)
   } else if (ext === 'txt') {
     return parseText(await file.text())
   }
@@ -58,6 +58,8 @@ async function parseSpreadsheet(file) {
   let currentSet = 0
   let currentSection = 'set'
   let headerRow = -1
+  // See parseText: explicit "Set N" rows win over blank-row inference.
+  const hasExplicitSets = rows.some(r => r && /^set\s*\d+\s*$/i.test(String(r[0] || '').trim()))
 
   // Find header row and column mapping
   let titleCol = 0
@@ -86,7 +88,8 @@ async function parseSpreadsheet(file) {
 
     // Empty row = set break
     if (!row || row.every(c => !c || String(c).trim() === '')) {
-      if (currentSection === 'set' && songs.some(s => s.setIndex === currentSet && s.section === 'set')) {
+      if (!hasExplicitSets && currentSection === 'set' &&
+          songs.some(s => s.setIndex === currentSet && s.section === 'set')) {
         currentSet++
       }
       continue
@@ -170,7 +173,61 @@ async function parseWord(file) {
   return parseText(result.value)
 }
 
-async function parsePDF(file) {
+/**
+ * Read an image-only PDF (a "Print to PDF" export, or a scan) by rendering each
+ * page and running OCR over it. Assets are served from public/tesseract/, staged
+ * by scripts/setup-ocr.mjs, so this works with no internet connection.
+ */
+async function ocrPDF(pdf, onProgress) {
+  const { createWorker } = await import('tesseract.js')
+  const base = import.meta.env.BASE_URL || '/'
+
+  let worker
+  try {
+    worker = await createWorker('eng', 1, {
+      workerPath: `${base}tesseract/worker.min.js`,
+      corePath: `${base}tesseract/core`,
+      langPath: `${base}tesseract/lang`,
+      gzip: true
+    })
+  } catch (err) {
+    throw new Error(
+      'This PDF has no text layer, and the OCR engine failed to start ' +
+      `(${err.message}). Run "npm run setup-ocr" to stage the OCR files.`
+    )
+  }
+
+  try {
+    let text = ''
+    for (let i = 1; i <= pdf.numPages; i++) {
+      onProgress?.(`Reading page ${i} of ${pdf.numPages} (scanned PDF)…`)
+      const page = await pdf.getPage(i)
+      // 2x scale — OCR accuracy drops badly at native resolution.
+      const viewport = page.getViewport({ scale: 2 })
+      const canvas = document.createElement('canvas')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      const ctx = canvas.getContext('2d')
+      // PDFs render with a transparent background, which OCRs poorly — paint white first.
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      await page.render({ canvasContext: ctx, viewport }).promise
+
+      const { data } = await worker.recognize(canvas)
+      text += (data.text || '') + '\n\n'
+
+      // Release the bitmap before the next page — a multi-page set list at 2x
+      // scale otherwise holds every canvas in memory at once.
+      canvas.width = 0
+      canvas.height = 0
+    }
+    return text
+  } finally {
+    await worker.terminate()
+  }
+}
+
+async function parsePDF(file, onProgress) {
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
   let fullText = ''
@@ -238,14 +295,18 @@ async function parsePDF(file) {
   }
 
   // Image-only PDFs (scanned, or made with "Microsoft Print to PDF") have no
-  // text layer, so nothing is extractable. Give a clear, actionable message
-  // instead of a generic "no songs found".
+  // text layer, so fall back to OCR on the rendered pages.
   if (!fullText.trim()) {
-    throw new Error(
-      'This PDF has no readable text — it looks like a scanned image or was ' +
-      'created with "Print to PDF". Re-save it as a text-based PDF (e.g. ' +
-      '"Save as PDF" from a browser), or upload an Excel, Word, CSV, or TXT file instead.'
-    )
+    fullText = await ocrPDF(pdf, onProgress)
+
+    if (!fullText.trim()) {
+      throw new Error(
+        'This PDF has no readable text and OCR could not make out any either. ' +
+        'If it is a photo or a low-resolution scan, try re-saving it as a ' +
+        'text-based PDF ("Save as PDF" rather than "Print to PDF"), or upload ' +
+        'an Excel, Word, CSV, or TXT file instead.'
+      )
+    }
   }
 
   return parseText(fullText)
@@ -257,10 +318,17 @@ function parseText(text) {
   let currentSet = 0
   let currentSection = 'set'
 
+  // When the file labels its sets explicitly, those labels are the only thing
+  // that starts a new set. Otherwise a stray blank line splits a set in two —
+  // which OCR output triggers constantly, since row spacing in a rendered page
+  // is irregular.
+  const hasExplicitSets = lines.some(l => /^set\s*\d+\s*$/i.test(l))
+
   for (const line of lines) {
     // Empty line
     if (!line) {
-      if (currentSection === 'set' && songs.some(s => s.setIndex === currentSet && s.section === 'set')) {
+      if (!hasExplicitSets && currentSection === 'set' &&
+          songs.some(s => s.setIndex === currentSet && s.section === 'set')) {
         currentSet++
       }
       continue
