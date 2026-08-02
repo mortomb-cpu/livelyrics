@@ -7,6 +7,7 @@ import { exportSetListPDF } from '../utils/exportPDF'
 import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
 import { fetchAllLyrics } from '../utils/lyricsService'
 import { getCacheCount, findCachedLyrics } from '../utils/lyricsCache'
+import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -51,14 +52,6 @@ export default function SetListView({
         return
       }
 
-      // Clear only set list songs — keep additional songs intact
-      // Remove songs that are in sets (not in additional)
-      const additionalSet = new Set(additionalSongIds)
-      const songsToKeep = songs.filter(s => additionalSet.has(s.id))
-      onSetSongs(songsToKeep)
-      onSetSets([])
-      onSetEncoreSongIds([])
-
       // Songs under an "Encore" / "Backup" heading are tagged by the parser and
       // routed to their own zones instead of being dropped on import.
       const setOnly = parsed.filter(s => (s.section || 'set') === 'set')
@@ -70,43 +63,25 @@ export default function SetListView({
       const newEncoreIds = []
       const importedAdditionalIds = []
 
-      // Build a lookup of existing additional songs by normalized title
-      const normalizeKey = (t) => t.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\s+/g, '')
-      const additionalByTitle = {}
-      songsToKeep.forEach(s => {
-        additionalByTitle[normalizeKey(s.title)] = s
-      })
-
-      // Deduplicate within the parsed file only
+      // Deduplicate within the parsed file itself
       const seenInParsed = new Set()
       const dedupedParsed = parsed.filter(s => {
-        const key = normalizeKey(s.title)
-        if (seenInParsed.has(key)) return false
+        const key = normalizeTitle(s.title)
+        if (!key || seenInParsed.has(key)) return false
         seenInParsed.add(key)
         return true
       })
 
-      // For each parsed song: reuse existing additional song if it matches, otherwise create new
-      const movedFromAdditional = new Set() // track which additional songs got moved to sets
+      // Match against the WHOLE library, not just Additional Songs. A song that
+      // was already in a set keeps its lyrics, BPM, synced timings and any
+      // hand-edits when it appears in the new file — previously those songs were
+      // discarded and rebuilt from scratch.
+      const reusedIds = new Set()
       const newSongs = []
+      const artistFills = new Map() // existing song id -> artist learned from this file
 
-      const createdKeys = new Set() // track keys of songs we've already handled
       for (const s of dedupedParsed) {
-        const key = normalizeKey(s.title)
-        if (createdKeys.has(key)) continue // skip if already handled
-        createdKeys.add(key)
-
-        // Try exact normalized match first, then fuzzy match
-        let existing = additionalByTitle[key]
-        if (!existing) {
-          // Fuzzy: find any additional song whose normalized title contains this key or vice versa
-          for (const [aKey, aSong] of Object.entries(additionalByTitle)) {
-            if (aKey.includes(key) || key.includes(aKey)) {
-              existing = aSong
-              break
-            }
-          }
-        }
+        const existing = findExistingSong(s, songs, reusedIds)
 
         const section = s.section || 'set'
         const placeId = (id) => {
@@ -116,11 +91,12 @@ export default function SetListView({
         }
 
         if (existing) {
-          // Song exists in additional — move it to the set (reuse the object)
+          reusedIds.add(existing.id)
+          // The file may name an artist the library was missing.
+          if (!existing.artist && s.artist) artistFills.set(existing.id, s.artist)
           placeId(existing.id)
-          if (section !== 'additional') movedFromAdditional.add(existing.id)
         } else {
-          // New song — create it and check cache
+          // Genuinely new song — create it, seeded from the lyrics library
           const cached = await findCachedLyrics(s.artist, s.title)
           const newSong = {
             id: Date.now().toString() + Math.random().toString(36).slice(2),
@@ -138,11 +114,14 @@ export default function SetListView({
         }
       }
 
-      // Remove moved songs from additional
-      const remainingAdditional = additionalSongIds.filter(id => !movedFromAdditional.has(id))
+      // Everything the new file didn't mention stays in the library, parked in
+      // Additional Songs — importing a set list never deletes songs.
+      const remainingAdditional = songs.filter(s => !reusedIds.has(s.id)).map(s => s.id)
 
-      // Merge: kept additional songs + new songs
-      onSetSongs([...songsToKeep, ...newSongs])
+      const keptSongs = songs.map(s =>
+        artistFills.has(s.id) ? { ...s, artist: artistFills.get(s.id) } : s
+      )
+      onSetSongs([...keptSongs, ...newSongs])
       onSetSets(newSets)
       onSetEncoreSongIds(newEncoreIds)
       onSetAdditionalSongIds([...new Set([...remainingAdditional, ...importedAdditionalIds])])

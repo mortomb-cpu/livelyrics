@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import { useState, useEffect, useCallback } from 'react'
 import SetListView from './components/SetListView'
 import PerformView from './components/PerformView'
+import { findExistingSong } from './utils/songMatch'
 
 const STORAGE_KEY = 'livelyrics_data'
 
@@ -40,16 +41,11 @@ function App() {
   }, [songs, sets, encoreSongIds, additionalSongIds, loaded])
 
   // Check if a song already exists (by normalized title + artist)
-  const isDuplicate = (title, artist) => {
-    const normTitle = title.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const normArtist = (artist || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    return songs.some(s => {
-      const sTitle = s.title.toLowerCase().replace(/[^a-z0-9]/g, '')
-      const sArtist = (s.artist || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-      // Match by title alone, or title + artist if both have artists
-      return sTitle === normTitle && (!normArtist || !sArtist || sArtist === normArtist)
-    })
-  }
+  // Shared with set list import, so "already have it" means the same thing in
+  // both directions — uploading a repertoire file never creates a second copy
+  // of a song that's already sitting in a set.
+  const isDuplicate = (title, artist) =>
+    findExistingSong({ title, artist }, songs) !== null
 
   const addSong = (song) => {
     if (isDuplicate(song.title, song.artist)) return null
