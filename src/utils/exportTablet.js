@@ -649,17 +649,17 @@ function processCloudTranscript(text, isFinal, dgConf) {
   if (isFinal && text.trim()) {
     transcriptBuffer += ' ' + text.trim();
     var bw = transcriptBuffer.trim().split(/\\s+/);
-    if (bw.length > 50) transcriptBuffer = bw.slice(-50).join(' ');
+    if (bw.length > 12) transcriptBuffer = bw.slice(-12).join(' ');
   }
   var full = (transcriptBuffer + ' ' + text).trim();
   if (!full) return;
-  var recent = full.split(/\\s+/).slice(-20).join(' ');
+  var recent = full.split(/\\s+/).slice(-8).join(' ');
   var tw = normalize(recent).split(/\\s+/).filter(function(w){return w.length>1;});
   if (tw.length < 2) return;
 
   var bestIdx = -1, bestScore = 0;
-  var start = Math.max(0, currentLineIndex - 2);
-  var end = Math.min(allLines.length, currentLineIndex + 30);
+  var start = Math.max(0, currentLineIndex - 1);
+  var end = Math.min(allLines.length, currentLineIndex + 5);
   for (var i = start; i < end; i++) {
     var lw = normalize(allLines[i]).split(/\\s+/).filter(function(w){return w.length>1;});
     if (!lw.length) continue;
@@ -676,9 +676,8 @@ function processCloudTranscript(text, isFinal, dgConf) {
   var now = Date.now();
   if (now - lastScrollTime < 800) return;
   if (bestIdx < highWaterMark) return;
-  if (bestIdx - currentLineIndex > 6 && bestScore < 0.5) return;
-  // Higher threshold for cloud — 0.45 instead of 0.35
-  if (bestIdx >= 0 && bestScore >= 0.30 && bestIdx >= currentLineIndex) {
+  if (bestIdx - currentLineIndex > 2 && bestScore < 0.55) return;
+  if (bestIdx >= 0 && bestScore >= 0.35 && bestIdx >= currentLineIndex) {
     currentLineIndex = bestIdx; highWaterMark = Math.max(highWaterMark, bestIdx);
     lastMatchTime = now; lastScrollTime = now;
     updateActiveLine();
