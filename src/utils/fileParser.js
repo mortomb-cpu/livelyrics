@@ -178,6 +178,62 @@ async function parseWord(file) {
  * page and running OCR over it. Assets are served from public/tesseract/, staged
  * by scripts/setup-ocr.mjs, so this works with no internet connection.
  */
+/**
+ * Repair the character confusions OCR reliably makes on set lists.
+ *
+ * A capital I in a sans-serif font is a bare vertical stroke, so Tesseract reads
+ * it as "|", "l" or "1" — turning "I Want It All" into "| Want It All" and
+ * "I Can't Dance" into "1Can't Dance".
+ */
+function repairOcrText(text) {
+  return text.split('\n').map(repairOcrLine).join('\n')
+}
+
+function repairOcrLine(line) {
+  return line
+    // "1. I Want It All" often comes back as the single token "1.1" — the list
+    // number and the misread I fused. Split them back apart. The trailing
+    // whitespace check keeps real numbers safe ("1. 1979" is untouched).
+    .replace(/^(\d+\s*[.)])\s*[|1l](?=\s)/, '$1 I')
+    // A lone "|" or "l" is never an English word — it's a capital I.
+    .replace(/(^|\s)[|l](?=\s)/g, '$1I')
+    // "|Can't" / "1Can't" / "lCan't" — capital I swallowed into the next word.
+    // Requires an immediately following capital+lowercase, so list numbering
+    // ("1. Creep") is left alone.
+    .replace(/(^|\s)[|1l](?=[A-Z][a-z])/g, '$1I ')
+    // A standalone "1" *mid-line* before a capitalised word is a misread I
+    // ("1. 1 Want It All" -> "1. I Want It All"). A leading "1" is list
+    // numbering and is deliberately left untouched.
+    .replace(/(\S\s+)1(?=\s+[A-Z])/g, '$1I')
+    // Anything still a pipe is a ruled table border, not text.
+    .replace(/\|/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+}
+
+/**
+ * Rebuild a text line from OCR word boxes, inserting " - " across a column gap.
+ *
+ * Tesseract's own `data.text` joins a two-column row into one string, so
+ * "I Want It All" + "Queen" arrives as "I Want It All Queen" and the artist ends
+ * up inside the title. Word geometry makes the split obvious: ordinary word gaps
+ * are a few pixels, a column gap is hundreds.
+ */
+function lineFromWords(words, imageWidth) {
+  const columnGap = Math.max(40, imageWidth * 0.05)
+  let out = ''
+  let prevEnd = null
+
+  for (const w of words) {
+    const text = (w.text || '').trim()
+    if (!text) continue
+    if (prevEnd === null) out = text
+    else if (w.bbox.x0 - prevEnd > columnGap) out += ' - ' + text
+    else out += ' ' + text
+    prevEnd = w.bbox.x1
+  }
+  return out
+}
+
 async function ocrPDF(pdf, onProgress) {
   const { createWorker } = await import('tesseract.js')
   const base = import.meta.env.BASE_URL || '/'
@@ -213,8 +269,21 @@ async function ocrPDF(pdf, onProgress) {
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       await page.render({ canvasContext: ctx, viewport }).promise
 
-      const { data } = await worker.recognize(canvas)
-      text += (data.text || '') + '\n\n'
+      // Ask for word geometry too — data.text alone loses the column structure.
+      const { data } = await worker.recognize(canvas, {}, { text: true, blocks: true })
+
+      const lines = []
+      for (const block of data.blocks || []) {
+        for (const para of block.paragraphs || []) {
+          for (const line of para.lines || []) {
+            const rebuilt = lineFromWords(line.words || [], canvas.width)
+            if (rebuilt.trim()) lines.push(rebuilt)
+          }
+        }
+      }
+
+      // Fall back to the flat text if the layout data is unavailable.
+      text += repairOcrText(lines.length ? lines.join('\n') : (data.text || '')) + '\n\n'
 
       // Release the bitmap before the next page — a multi-page set list at 2x
       // scale otherwise holds every canvas in memory at once.
