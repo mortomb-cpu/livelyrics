@@ -8,6 +8,7 @@ import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc
 import { fetchAllLyrics } from '../utils/lyricsService'
 import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } from '../utils/lyricsCache'
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
+import { factoryReset } from '../utils/factoryReset'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -15,7 +16,7 @@ import AdditionalSongsPanel from './AdditionalSongsPanel'
 export default function SetListView({
   songs, sets, encoreSongIds, additionalSongIds,
   onAddSong, onUpdateSong, onRemoveSong,
-  onMoveSong, onAddSet, onRemoveSet, onClearSetList, onDeleteEverything, onDragEnd,
+  onMoveSong, onAddSet, onRemoveSet, onClearSetList, onDragEnd,
   onAddSongsToAdditional, onSetSongs, onSetSets, onSetEncoreSongIds, onSetAdditionalSongIds
 }) {
   const navigate = useNavigate()
@@ -452,21 +453,28 @@ export default function SetListView({
                 </button>
 
                 <button
-                  onClick={() => {
-                    if (confirm('WARNING: This will permanently delete ALL songs, lyrics, and cached data. This cannot be undone.\n\nAre you sure?')) {
-                      if (confirm('Really delete everything? Your entire song library will be gone.')) {
-                        stopFetching()
-                        onDeleteEverything()
-                        // Wipe IndexedDB and localStorage
-                        indexedDB.deleteDatabase('livelyrics_cache')
-                        localStorage.removeItem('livelyrics_data')
-                        window.location.reload()
-                      }
-                    }
+                  onClick={async () => {
+                    if (!confirm(
+                      `FACTORY RESET\n\nThis permanently deletes everything:\n` +
+                      `  • all ${songs.length} songs and the set list\n` +
+                      `  • the whole lyrics library (${cachedCount} saved)\n` +
+                      `  • your saved GitHub publish token\n\n` +
+                      `The app returns to a fresh install. This cannot be undone.`
+                    )) return
+                    if (!confirm('Last chance — really erase everything?')) return
+
+                    stopFetching()
+                    setImportStatus('Erasing all data…')
+                    // Deliberately no state updates before the reload: touching
+                    // React state here would re-save the set list to
+                    // localStorage right after we cleared it.
+                    await factoryReset()
+                    window.location.reload()
                   }}
+                  title="Delete all songs, lyrics and settings — returns the app to a fresh install"
                   className="text-slate-600 hover:text-red-500 hover:bg-red-900/20 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-colors"
                 >
-                  Reset Library
+                  Factory Reset
                 </button>
               </>
             )}

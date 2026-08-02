@@ -27,6 +27,23 @@ function openDB() {
   })
 }
 
+/**
+ * Run an operation against the store and always close the connection.
+ *
+ * Leaving connections open makes indexedDB.deleteDatabase() hang forever on
+ * "blocked", which is exactly what stopped the reset button from working.
+ * close() defers until the operation's transaction finishes, so awaiting the
+ * result before closing is safe.
+ */
+async function withDB(fn) {
+  const db = await openDB()
+  try {
+    return await fn(db)
+  } finally {
+    db.close()
+  }
+}
+
 function makeCacheKey(artist, title) {
   return `${artist.toLowerCase().trim()}|${title.toLowerCase().trim()}`
 }
@@ -37,19 +54,12 @@ function makeCacheKey(artist, title) {
  */
 export async function getCachedLyrics(artist, title) {
   try {
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const store = tx.objectStore(STORE_NAME)
-    const key = makeCacheKey(artist, title)
-
-    return new Promise((resolve) => {
-      const request = store.get(key)
-      request.onsuccess = () => {
-        const result = request.result
-        resolve(result ? result.lyrics : null)
-      }
+    return await withDB(db => new Promise((resolve) => {
+      const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
+      const request = store.get(makeCacheKey(artist, title))
+      request.onsuccess = () => resolve(request.result ? request.result.lyrics : null)
       request.onerror = () => resolve(null)
-    })
+    }))
   } catch {
     return null
   }
@@ -82,22 +92,18 @@ export async function cacheLyrics(artist, title, lyrics) {
   try {
     if (!title || !lyrics) return false
     artist = artist || ''
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-
-    store.put({
-      key: makeCacheKey(artist, title),
-      artist: artist.trim(),
-      title: title.trim(),
-      lyrics,
-      savedAt: new Date().toISOString()
-    })
-
-    return new Promise((resolve) => {
+    return await withDB(db => new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).put({
+        key: makeCacheKey(artist, title),
+        artist: artist.trim(),
+        title: title.trim(),
+        lyrics,
+        savedAt: new Date().toISOString()
+      })
       tx.oncomplete = () => resolve(true)
       tx.onerror = () => resolve(false)
-    })
+    }))
   } catch {
     return false
   }
@@ -108,15 +114,12 @@ export async function cacheLyrics(artist, title, lyrics) {
  */
 export async function getCacheCount() {
   try {
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const store = tx.objectStore(STORE_NAME)
-
-    return new Promise((resolve) => {
+    return await withDB(db => new Promise((resolve) => {
+      const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
       const request = store.count()
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => resolve(0)
-    })
+    }))
   } catch {
     return 0
   }
@@ -128,15 +131,12 @@ export async function getCacheCount() {
  */
 export async function getAllCachedSongs() {
   try {
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const store = tx.objectStore(STORE_NAME)
-
-    return new Promise((resolve) => {
+    return await withDB(db => new Promise((resolve) => {
+      const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME)
       const request = store.getAll()
       request.onsuccess = () => resolve(request.result || [])
       request.onerror = () => resolve([])
-    })
+    }))
   } catch {
     return []
   }
@@ -172,15 +172,13 @@ export async function deleteCachedSong(artist, title) {
     const doomed = all.filter(s => (s.title || '').toLowerCase().trim() === wanted)
     if (!doomed.length) return 0
 
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    doomed.forEach(s => store.delete(s.key))
-
-    return new Promise((resolve) => {
+    return await withDB(db => new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      const store = tx.objectStore(STORE_NAME)
+      doomed.forEach(s => store.delete(s.key))
       tx.oncomplete = () => resolve(doomed.length)
       tx.onerror = () => resolve(0)
-    })
+    }))
   } catch {
     return 0
   }
@@ -188,18 +186,18 @@ export async function deleteCachedSong(artist, title) {
 
 /**
  * Clear entire lyrics cache.
+ *
+ * Empties the object store rather than dropping the database — a transaction
+ * always runs, whereas deleteDatabase() stalls if any connection is open.
  */
 export async function clearCache() {
   try {
-    const db = await openDB()
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    store.clear()
-
-    return new Promise((resolve) => {
+    return await withDB(db => new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite')
+      tx.objectStore(STORE_NAME).clear()
       tx.oncomplete = () => resolve(true)
       tx.onerror = () => resolve(false)
-    })
+    }))
   } catch {
     return false
   }

@@ -154,17 +154,6 @@ function App() {
     }))
   }
 
-  // The destructive one, used only by "Reset Library" alongside clearing the
-  // IndexedDB lyrics cache.
-  const deleteEverything = () => {
-    setSongs([])
-    setSets([])
-    setEncoreSongIds([])
-    setAdditionalSongIds([])
-    // Force save empty state immediately so reload doesn't bring back old data
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ songs: [], sets: [], encoreSongIds: [], additionalSongIds: [] }))
-  }
-
   // Parse droppable ID
   const parseDroppableId = (id) => {
     if (id === 'additional') return { type: 'additional' }
@@ -247,7 +236,6 @@ function App() {
           onAddSet={addSet}
           onRemoveSet={removeSet}
           onClearSetList={clearSetList}
-          onDeleteEverything={deleteEverything}
           onDragEnd={handleDragEnd}
           onAddSongsToAdditional={addSongsToAdditional}
           onSetSongs={setSongs}
