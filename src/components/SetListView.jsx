@@ -9,6 +9,7 @@ import { fetchAllLyrics } from '../utils/lyricsService'
 import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } from '../utils/lyricsCache'
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import { factoryReset } from '../utils/factoryReset'
+import { exportLibrary, importLibrary } from '../utils/libraryBackup'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -21,6 +22,7 @@ export default function SetListView({
 }) {
   const navigate = useNavigate()
   const fileInputRef = useRef(null)
+  const restoreInputRef = useRef(null)
   const [editingSong, setEditingSong] = useState(null)
   const [fetchProgress, setFetchProgress] = useState(null)
   const [addingManual, setAddingManual] = useState(false)
@@ -156,6 +158,42 @@ export default function SetListView({
     if (match) onRemoveSong(match.id)
     setLibraryEntries(await getAllCachedSongs())
     getCacheCount().then(setCachedCount)
+  }
+
+  const handleBackup = async () => {
+    try {
+      const r = await exportLibrary({ songs, sets, encoreSongIds, additionalSongIds })
+      setImportStatus(`Backed up ${r.songs} songs and ${r.library} saved lyrics`)
+      setTimeout(() => setImportStatus(''), 4000)
+    } catch (err) {
+      setError(`Backup failed: ${err.message}`)
+    }
+  }
+
+  const handleRestore = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setError('')
+    setImportStatus('Restoring backup…')
+    try {
+      const r = await importLibrary(file)
+      if (r.setList) {
+        onSetSongs(r.setList.songs)
+        onSetSets(r.setList.sets)
+        onSetEncoreSongIds(r.setList.encoreSongIds)
+        onSetAdditionalSongIds(r.setList.additionalSongIds)
+      }
+      getCacheCount().then(setCachedCount)
+      setImportStatus(
+        `Restored ${r.restoredLyrics} songs' lyrics` +
+        (r.exportedAt ? ` from the backup made ${new Date(r.exportedAt).toLocaleDateString()}` : '')
+      )
+      setTimeout(() => setImportStatus(''), 5000)
+    } catch (err) {
+      setError(err.message)
+      setImportStatus('')
+    }
+    if (restoreInputRef.current) restoreInputRef.current.value = ''
   }
 
   const handleAddManual = () => {
@@ -489,6 +527,14 @@ export default function SetListView({
           </div>
         </div>
 
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleRestore}
+          className="hidden"
+        />
+
         {/* Library manager — every song with saved lyrics, deletable one by one.
             Songs can live here without being in the current set list, so this is
             the only place some of them are reachable. */}
@@ -523,6 +569,25 @@ export default function SetListView({
                   placeholder="Search by title or artist…"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500"
                 />
+
+                {/* The library only exists in this browser — give it somewhere
+                    safe to live outside it. */}
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={handleBackup}
+                    title="Save every song, set list and saved lyric to a file you can keep"
+                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
+                  >
+                    ⬇ Back up to file
+                  </button>
+                  <button
+                    onClick={() => restoreInputRef.current?.click()}
+                    title="Restore from a backup file — merges into what you already have"
+                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs font-medium px-3 py-2 rounded-lg transition-colors"
+                  >
+                    ⬆ Restore from file
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-y-auto p-2">
