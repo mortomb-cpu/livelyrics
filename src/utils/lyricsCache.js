@@ -56,10 +56,32 @@ export async function getCachedLyrics(artist, title) {
 }
 
 /**
+ * Look up cached lyrics when the artist may be unknown.
+ * Tries the exact artist+title key first, then falls back to matching on title
+ * alone — songs imported from a title-only set list have no artist, and were
+ * previously invisible to the cache entirely.
+ */
+export async function findCachedLyrics(artist, title) {
+  if (!title) return null
+  if (artist) {
+    const exact = await getCachedLyrics(artist, title)
+    if (exact) return exact
+  }
+  const all = await getAllCachedSongs()
+  const wanted = title.toLowerCase().trim()
+  const hit = all.find(s => (s.title || '').toLowerCase().trim() === wanted)
+  return hit ? hit.lyrics : null
+}
+
+/**
  * Save lyrics to the persistent cache.
+ * `artist` may be empty — the entry is still stored (keyed on title alone) so a
+ * title-only set list still builds up a reusable library.
  */
 export async function cacheLyrics(artist, title, lyrics) {
   try {
+    if (!title || !lyrics) return false
+    artist = artist || ''
     const db = await openDB()
     const tx = db.transaction(STORE_NAME, 'readwrite')
     const store = tx.objectStore(STORE_NAME)

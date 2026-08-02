@@ -1,19 +1,21 @@
-import { getCachedLyrics, cacheLyrics } from './lyricsCache'
+import { findCachedLyrics, cacheLyrics } from './lyricsCache'
 
 /**
  * Fetch lyrics — checks persistent cache first, then fetches online.
  * Any successfully fetched lyrics are saved to cache for future use.
  */
-export async function fetchLyrics(artist, title) {
+export async function fetchLyrics(artist, title, { useCache = true } = {}) {
   if (!title) {
     throw new Error('Song title is required')
   }
 
-  // Check cache first (only if we have an artist for the cache key)
-  if (artist) {
-    const cached = await getCachedLyrics(artist, title)
+  // Check cache first — works with or without a known artist.
+  // Callers that need server-only data (BPM, synced/timed lines) pass
+  // useCache:false, since the cache stores lyrics text only.
+  if (useCache) {
+    const cached = await findCachedLyrics(artist, title)
     if (cached) {
-      return cached
+      return { lyrics: cached, bpm: 120, syncedLines: null, duration: null }
     }
   }
 
@@ -27,11 +29,9 @@ export async function fetchLyrics(artist, title) {
     throw new Error(data.suggestion || data.error || 'Failed to fetch lyrics')
   }
 
-  // Save to persistent cache for future shows
-  const cacheArtist = data.artist || artist || ''
-  if (cacheArtist) {
-    await cacheLyrics(cacheArtist, title, data.lyrics)
-  }
+  // Save to persistent cache for future shows. Stored even when the artist is
+  // unknown (keyed on title alone) so title-only set lists still build a library.
+  await cacheLyrics(data.artist || artist || '', title, data.lyrics)
 
   return {
     lyrics: data.lyrics,
@@ -52,7 +52,9 @@ async function fetchLyricsWithRetry(artist, title, abortSignal, attempts = 3) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (abortSignal?.aborted) throw new Error('Aborted')
     try {
-      return await fetchLyrics(artist, title)
+      // useCache:false — fetchAllLyrics already resolved the cache in phase 1 and
+      // is here specifically for the server-side BPM and synced-line data.
+      return await fetchLyrics(artist, title, { useCache: false })
     } catch (err) {
       lastErr = err
       if (attempt < attempts && !abortSignal?.aborted) {
@@ -87,7 +89,7 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
       continue
     }
 
-    const cached = song.artist ? await getCachedLyrics(song.artist, song.title) : null
+    const cached = await findCachedLyrics(song.artist, song.title)
     if (cached) {
       // Got lyrics from cache but need synced data from server
       toFetchOnline.push({ ...song, lyrics: cached, _cachedLyrics: true })

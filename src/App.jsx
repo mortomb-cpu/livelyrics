@@ -140,8 +140,22 @@ function App() {
     setAdditionalSongIds(prev => [...prev, ...unique.map(s => s.id)])
   }
 
-  const clearAll = () => {
-    // Clear everything visually — songs stay in IndexedDB cache for future auto-populate
+  // "Clear All" = tear down the set list only. Every song (and its fetched
+  // lyrics) is kept and returned to Additional Songs, so a new set list can be
+  // built by dragging from the existing library instead of re-importing.
+  const clearSetList = () => {
+    const allIds = songs.map(s => s.id)
+    setSets([])
+    setEncoreSongIds([])
+    setAdditionalSongIds(allIds)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      songs, sets: [], encoreSongIds: [], additionalSongIds: allIds
+    }))
+  }
+
+  // The destructive one, used only by "Reset Library" alongside clearing the
+  // IndexedDB lyrics cache.
+  const deleteEverything = () => {
     setSongs([])
     setSets([])
     setEncoreSongIds([])
@@ -231,7 +245,8 @@ function App() {
           onMoveSong={moveSong}
           onAddSet={addSet}
           onRemoveSet={removeSet}
-          onClearAll={clearAll}
+          onClearSetList={clearSetList}
+          onDeleteEverything={deleteEverything}
           onDragEnd={handleDragEnd}
           onAddSongsToAdditional={addSongsToAdditional}
           onSetSongs={setSongs}

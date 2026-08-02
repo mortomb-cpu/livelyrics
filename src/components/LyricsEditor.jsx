@@ -156,7 +156,9 @@ export default function LyricsEditor({ song, onSave, onClose }) {
     setError('')
     try {
       const result = await fetchLyrics(artist, title)
-      setLyrics(result)
+      // fetchLyrics returns { lyrics, bpm, ... } — assigning the object itself
+      // put "[object Object]" in the editor.
+      setLyrics(typeof result === 'string' ? result : result.lyrics)
     } catch (err) {
       setError(err.message)
     }

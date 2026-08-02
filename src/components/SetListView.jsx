@@ -6,7 +6,7 @@ import { exportForTablet } from '../utils/exportTablet'
 import { exportSetListPDF } from '../utils/exportPDF'
 import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
 import { fetchAllLyrics } from '../utils/lyricsService'
-import { getCacheCount, getCachedLyrics } from '../utils/lyricsCache'
+import { getCacheCount, findCachedLyrics } from '../utils/lyricsCache'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -14,7 +14,7 @@ import AdditionalSongsPanel from './AdditionalSongsPanel'
 export default function SetListView({
   songs, sets, encoreSongIds, additionalSongIds,
   onAddSong, onUpdateSong, onRemoveSong,
-  onMoveSong, onAddSet, onRemoveSet, onClearAll, onDragEnd,
+  onMoveSong, onAddSet, onRemoveSet, onClearSetList, onDeleteEverything, onDragEnd,
   onAddSongsToAdditional, onSetSongs, onSetSets, onSetEncoreSongIds, onSetAdditionalSongIds
 }) {
   const navigate = useNavigate()
@@ -119,7 +119,7 @@ export default function SetListView({
           if (section !== 'additional') movedFromAdditional.add(existing.id)
         } else {
           // New song — create it and check cache
-          const cached = s.artist ? await getCachedLyrics(s.artist, s.title) : null
+          const cached = await findCachedLyrics(s.artist, s.title)
           const newSong = {
             id: Date.now().toString() + Math.random().toString(36).slice(2),
             title: s.title,
@@ -434,10 +434,16 @@ export default function SetListView({
                 <div className="w-px h-4 bg-slate-700 mx-1" />
 
                 <button
-                  onClick={() => { if (confirm('Clear entire set list and start fresh?')) { stopFetching(); onClearAll() } }}
-                  className="text-slate-500 hover:text-red-400 hover:bg-red-900/20 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors"
+                  onClick={() => {
+                    if (confirm(
+                      `Clear the set list?\n\nAll ${songs.length} songs (and their lyrics) move to Additional Songs, ` +
+                      `so you can drag them into a new set list. Nothing is deleted.`
+                    )) { stopFetching(); onClearSetList() }
+                  }}
+                  title="Empties the sets and encore — songs move to Additional Songs, nothing is deleted"
+                  className="text-slate-500 hover:text-amber-400 hover:bg-amber-900/20 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors"
                 >
-                  Clear All
+                  Clear Set List
                 </button>
 
                 <button
@@ -445,7 +451,7 @@ export default function SetListView({
                     if (confirm('WARNING: This will permanently delete ALL songs, lyrics, and cached data. This cannot be undone.\n\nAre you sure?')) {
                       if (confirm('Really delete everything? Your entire song library will be gone.')) {
                         stopFetching()
-                        onClearAll()
+                        onDeleteEverything()
                         // Wipe IndexedDB and localStorage
                         indexedDB.deleteDatabase('livelyrics_cache')
                         localStorage.removeItem('livelyrics_data')

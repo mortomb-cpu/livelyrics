@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { Droppable, Draggable } from '@hello-pangea/dnd'
 import { parseFile } from '../utils/fileParser'
-import { getCachedLyrics } from '../utils/lyricsCache'
+import { findCachedLyrics } from '../utils/lyricsCache'
 import SongCard from './SongCard'
 
 export default function AdditionalSongsPanel({ songs, additionalSongIds, onEdit, onRemove, onAddSongs }) {
@@ -17,7 +17,7 @@ export default function AdditionalSongsPanel({ songs, additionalSongIds, onEdit,
 
       // Build song objects, check cache for each
       const newSongs = await Promise.all(parsed.map(async (s) => {
-        const cached = s.artist ? await getCachedLyrics(s.artist, s.title) : null
+        const cached = await findCachedLyrics(s.artist, s.title)
         return {
           id: Date.now().toString() + Math.random().toString(36).slice(2),
           title: s.title,
