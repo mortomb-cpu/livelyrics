@@ -6,7 +6,7 @@ import { exportForTablet } from '../utils/exportTablet'
 import { exportSetListPDF } from '../utils/exportPDF'
 import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
 import { fetchAllLyrics } from '../utils/lyricsService'
-import { getCacheCount, findCachedLyrics } from '../utils/lyricsCache'
+import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } from '../utils/lyricsCache'
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
@@ -27,6 +27,8 @@ export default function SetListView({
   const [manualArtist, setManualArtist] = useState('')
   const [error, setError] = useState('')
   const [importStatus, setImportStatus] = useState('')
+  const [libraryEntries, setLibraryEntries] = useState(null) // null = closed
+  const [librarySearch, setLibrarySearch] = useState('')
   const [cachedCount, setCachedCount] = useState(0)
   const [showEncore, setShowEncore] = useState(true)
   const [publishDialog, setPublishDialog] = useState(null) // null | 'token' | 'publishing' | 'success' | 'error'
@@ -133,6 +135,26 @@ export default function SetListView({
     }
 
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const openLibrary = async () => {
+    setLibrarySearch('')
+    setLibraryEntries(await getAllCachedSongs())
+  }
+
+  // Delete one song's saved lyrics. Also drops the song from the current set
+  // list if it's sitting there, so the two views don't disagree.
+  const deleteFromLibrary = async (entry) => {
+    if (!confirm(
+      `Delete "${entry.title}" from the library?\n\n` +
+      `This removes its saved lyrics permanently. Other songs are not affected.`
+    )) return
+
+    await deleteCachedSong(entry.artist, entry.title)
+    const match = findExistingSong({ title: entry.title, artist: entry.artist }, songs)
+    if (match) onRemoveSong(match.id)
+    setLibraryEntries(await getAllCachedSongs())
+    getCacheCount().then(setCachedCount)
   }
 
   const handleAddManual = () => {
@@ -448,8 +470,90 @@ export default function SetListView({
                 </button>
               </>
             )}
+
+            <button
+              onClick={openLibrary}
+              title="Browse every song with saved lyrics, and delete them one at a time"
+              className="text-slate-500 hover:text-sky-300 hover:bg-sky-900/20 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-colors"
+            >
+              Library{cachedCount ? ` (${cachedCount})` : ''}
+            </button>
           </div>
         </div>
+
+        {/* Library manager — every song with saved lyrics, deletable one by one.
+            Songs can live here without being in the current set list, so this is
+            the only place some of them are reachable. */}
+        {libraryEntries && (
+          <div
+            className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+            onClick={() => setLibraryEntries(null)}
+          >
+            <div
+              className="bg-slate-800 border border-slate-700 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-slate-700">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-slate-100 font-semibold">
+                    Song Library
+                    <span className="text-slate-400 text-sm font-normal ml-2">
+                      {libraryEntries.length} {libraryEntries.length === 1 ? 'song' : 'songs'}
+                    </span>
+                  </h2>
+                  <button
+                    onClick={() => setLibraryEntries(null)}
+                    className="text-slate-400 hover:text-slate-100 px-2"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={librarySearch}
+                  onChange={(e) => setLibrarySearch(e.target.value)}
+                  placeholder="Search by title or artist…"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500"
+                />
+              </div>
+
+              <div className="overflow-y-auto p-2">
+                {libraryEntries.length === 0 && (
+                  <p className="text-slate-400 text-sm p-4 text-center">
+                    No saved lyrics yet. Fetch lyrics for a set list and they'll appear here.
+                  </p>
+                )}
+                {libraryEntries
+                  .filter(e => {
+                    const q = librarySearch.toLowerCase().trim()
+                    if (!q) return true
+                    return (e.title || '').toLowerCase().includes(q) ||
+                           (e.artist || '').toLowerCase().includes(q)
+                  })
+                  .map(e => (
+                    <div
+                      key={e.key}
+                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-700/50"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-slate-100 text-sm truncate">{e.title}</div>
+                        <div className="text-slate-400 text-xs truncate">
+                          {e.artist || 'Unknown artist'} · {(e.lyrics || '').length} chars
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteFromLibrary(e)}
+                        title={`Delete "${e.title}" from the library`}
+                        className="text-slate-500 hover:text-red-400 hover:bg-red-900/20 px-2 py-1 rounded shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Import status — OCR on an image-only PDF takes a few seconds per page */}
         {importStatus && (

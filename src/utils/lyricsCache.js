@@ -157,6 +157,36 @@ export async function searchCachedSongs(query) {
 }
 
 /**
+ * Delete one song's lyrics from the library.
+ *
+ * Matches on title rather than the exact artist|title key: the same song can
+ * have been stored more than once (once with an artist, once without, from a
+ * title-only import), and leaving any copy behind means the song reappears the
+ * next time a set list mentions it. Returns how many entries were removed.
+ */
+export async function deleteCachedSong(artist, title) {
+  try {
+    if (!title) return 0
+    const wanted = title.toLowerCase().trim()
+    const all = await getAllCachedSongs()
+    const doomed = all.filter(s => (s.title || '').toLowerCase().trim() === wanted)
+    if (!doomed.length) return 0
+
+    const db = await openDB()
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    doomed.forEach(s => store.delete(s.key))
+
+    return new Promise((resolve) => {
+      tx.oncomplete = () => resolve(doomed.length)
+      tx.onerror = () => resolve(0)
+    })
+  } catch {
+    return 0
+  }
+}
+
+/**
  * Clear entire lyrics cache.
  */
 export async function clearCache() {

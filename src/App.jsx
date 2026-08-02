@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import SetListView from './components/SetListView'
 import PerformView from './components/PerformView'
 import { findExistingSong } from './utils/songMatch'
+import { deleteCachedSong } from './utils/lyricsCache'
 
 const STORAGE_KEY = 'livelyrics_data'
 
@@ -89,9 +90,13 @@ function App() {
     const isInEncore = encoreSongIds.includes(id)
 
     if (isInAdditional) {
-      // Removing from additional = remove from view only, lyrics stay in IndexedDB cache
+      // Removing from additional deletes the song outright — including its saved
+      // lyrics. Without the cache purge the song simply reappears, fully
+      // populated, the next time a set list mentions it.
+      const song = songs.find(s => s.id === id)
       setSongs(prev => prev.filter(s => s.id !== id))
       setAdditionalSongIds(prev => prev.filter(sid => sid !== id))
+      if (song) deleteCachedSong(song.artist, song.title)
     } else if (isInSet || isInEncore) {
       // Removing from set/encore = move to additional
       setSets(prev => prev.map(set => ({
