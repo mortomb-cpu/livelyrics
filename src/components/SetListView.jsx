@@ -57,11 +57,16 @@ export default function SetListView({
       onSetSets([])
       onSetEncoreSongIds([])
 
-      const maxSet = Math.max(...parsed.map(s => s.setIndex))
+      // Songs under an "Encore" / "Backup" heading are tagged by the parser and
+      // routed to their own zones instead of being dropped on import.
+      const setOnly = parsed.filter(s => (s.section || 'set') === 'set')
+      const maxSet = setOnly.length ? Math.max(...setOnly.map(s => s.setIndex)) : 0
       const newSets = Array.from({ length: maxSet + 1 }, (_, i) => ({
         name: `Set ${i + 1}`,
         songIds: []
       }))
+      const newEncoreIds = []
+      const importedAdditionalIds = []
 
       // Build a lookup of existing additional songs by normalized title
       const normalizeKey = (t) => t.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\s+/g, '')
@@ -101,10 +106,17 @@ export default function SetListView({
           }
         }
 
+        const section = s.section || 'set'
+        const placeId = (id) => {
+          if (section === 'encore') newEncoreIds.push(id)
+          else if (section === 'additional') importedAdditionalIds.push(id)
+          else newSets[s.setIndex].songIds.push(id)
+        }
+
         if (existing) {
           // Song exists in additional — move it to the set (reuse the object)
-          newSets[s.setIndex].songIds.push(existing.id)
-          movedFromAdditional.add(existing.id)
+          placeId(existing.id)
+          if (section !== 'additional') movedFromAdditional.add(existing.id)
         } else {
           // New song — create it and check cache
           const cached = s.artist ? await getCachedLyrics(s.artist, s.title) : null
@@ -116,10 +128,11 @@ export default function SetListView({
             lyricsStatus: cached ? 'cached' : (s.needsAttention ? 'attention' : 'pending'),
             setIndex: s.setIndex,
             needsAttention: s.needsAttention || false,
+            isMedley: s.isMedley || false,
             rawTitle: s.rawTitle || ''
           }
           newSongs.push(newSong)
-          newSets[s.setIndex].songIds.push(newSong.id)
+          placeId(newSong.id)
         }
       }
 
@@ -129,7 +142,8 @@ export default function SetListView({
       // Merge: kept additional songs + new songs
       onSetSongs([...songsToKeep, ...newSongs])
       onSetSets(newSets)
-      onSetAdditionalSongIds(remainingAdditional)
+      onSetEncoreSongIds(newEncoreIds)
+      onSetAdditionalSongIds([...new Set([...remainingAdditional, ...importedAdditionalIds])])
       getCacheCount().then(setCachedCount)
     } catch (err) {
       setError(err.message)
@@ -174,7 +188,9 @@ export default function SetListView({
     if (!abortController.signal.aborted) {
       results.forEach(r => {
         if (r.lyrics) {
-          const updates = { lyrics: r.lyrics, lyricsStatus: r.status }
+          // Lyrics arrived, so whatever the file was missing no longer matters —
+          // clear the amber "Needs info" flag.
+          const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
           if (r.bpm) updates.bpm = r.bpm
           if (r.syncedLines) updates.syncedLines = r.syncedLines
           if (r.duration) updates.duration = r.duration
@@ -189,11 +205,18 @@ export default function SetListView({
     setFetchProgress(null)
   }
 
+  // A song is fetchable as long as it has a real title. Only medleys ("A + B + C")
+  // are skipped, since they're compound entries the user has to split by hand.
+  // Note: we deliberately do NOT skip `needsAttention` songs — that flag only means
+  // "title wasn't in the 220-song lookup table and the file had no artist column",
+  // which describes most of a modern set list. The lyrics API resolves by title
+  // alone just fine, so skipping them meant nothing got fetched at all.
+  const isFetchable = (s) => s.title && !s.isMedley
+
   const handleFetchAllLyrics = () => {
     runFetch(songs.filter(s =>
-      s.title &&
-      !s.needsAttention &&
-      (!s.lyrics || s.lyricsStatus === 'pending' || s.lyricsStatus === 'failed')
+      isFetchable(s) &&
+      (!s.lyrics || s.lyricsStatus === 'pending' || s.lyricsStatus === 'attention' || s.lyricsStatus === 'failed')
     ))
   }
 
@@ -201,7 +224,7 @@ export default function SetListView({
   // timeouts, so a targeted retry usually fills them in).
   const handleRetryFailed = () => {
     runFetch(songs.filter(s =>
-      s.title && !s.needsAttention && s.lyricsStatus === 'failed'
+      isFetchable(s) && s.lyricsStatus === 'failed'
     ))
   }
 
