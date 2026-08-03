@@ -205,9 +205,32 @@ function repairOcrLine(line) {
     // ("1. 1 Want It All" -> "1. I Want It All"). A leading "1" is list
     // numbering and is deliberately left untouched.
     .replace(/(\S\s+)1(?=\s+[A-Z])/g, '$1I')
-    // Anything still a pipe is a ruled table border, not text.
+    // A stroke glued to LOWERCASE is a misread capital too — "|he Jackson 5"
+    // is "The Jackson 5". This has to run before the cleanup below, which
+    // would otherwise turn the stroke into a space and eat the letter.
+    .replace(/(^|\s)[|1l](?=[a-z])/g, (match, lead, offset, whole) =>
+      lead + capitalForStroke(whole.slice(offset + lead.length + 1))
+    )
+    // Only now: a pipe with no letter attached is a ruled table border.
     .replace(/\|/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
+}
+
+// Which capital did OCR flatten into a vertical stroke? Decided by the letters
+// that follow, since "The"/"This" and "It"/"In" are overwhelmingly what these
+// turn out to be on a set list. Anything unrecognised keeps the stroke rather
+// than guessing — a visible "|" can be corrected, a deleted letter can't.
+const STROKE_WORDS = [
+  [/^(he|his|hat|heir|hese|hose|hen|here|hough)\b/, 'T'],
+  [/^(t|ts|n|s|f|nto|-)\b/, 'I'],
+  [/^('m|'ve|'ll|'d)\b/, 'I']
+]
+
+function capitalForStroke(rest) {
+  for (const [pattern, letter] of STROKE_WORDS) {
+    if (pattern.test(rest)) return letter
+  }
+  return '|'
 }
 
 /**
