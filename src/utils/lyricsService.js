@@ -69,6 +69,22 @@ async function fetchLyricsWithRetry(artist, title, abortSignal, attempts = 3) {
 }
 
 /**
+ * Does this song still need something only the server can provide?
+ *
+ * Synced timings, song length and the artist name never come from the lyrics
+ * cache, which stores text alone — so a song can have perfect lyrics and still
+ * be missing all three.
+ *
+ * Exported and used by BOTH the caller's "what should I fetch" filter and the
+ * skip check inside fetchAllLyrics. Those were separate copies twice over, and
+ * both times they drifted: the caller selected a song and this function then
+ * skipped it, so the fetch silently did nothing.
+ */
+export function needsServerData(song) {
+  return !song.syncedLines || !(song.duration > 0) || !song.artist
+}
+
+/**
  * Fetch lyrics for multiple songs with progress callback.
  * Uses cache when available — cached songs are instant, no network needed.
  */
@@ -80,9 +96,8 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
   const toFetchOnline = []
   for (const song of songs) {
     if (song.lyrics && song.lyricsStatus !== 'pending') {
-      // Has lyrics but missing the server-only extras (synced timings, song
-      // length)? Still worth a fetch — the cache stores lyrics text alone.
-      if (!song.syncedLines || !song.duration) {
+      // Has lyrics but missing something only the server has? Still worth a fetch.
+      if (needsServerData(song)) {
         toFetchOnline.push(song)
       } else {
         results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm, duration: song.duration })

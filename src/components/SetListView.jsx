@@ -5,7 +5,7 @@ import { parseFile } from '../utils/fileParser'
 import { exportForTablet } from '../utils/exportTablet'
 import { exportSetListPDF } from '../utils/exportPDF'
 import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
-import { fetchAllLyrics } from '../utils/lyricsService'
+import { fetchAllLyrics, needsServerData } from '../utils/lyricsService'
 import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } from '../utils/lyricsCache'
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import { factoryReset } from '../utils/factoryReset'
@@ -291,11 +291,6 @@ export default function SetListView({
   // alone just fine, so skipping them meant nothing got fetched at all.
   const isFetchable = (s) => s.title && !s.isMedley
 
-  // Song length and synced timings only come from the server — the lyrics cache
-  // stores text alone. A song can therefore have perfectly good lyrics and still
-  // be missing both, which is why this can't just test for missing lyrics.
-  const missingServerExtras = (s) => !s.syncedLines || !(s.duration > 0)
-
   const handleFetchAllLyrics = () => {
     runFetch(songs.filter(s =>
       isFetchable(s) &&
@@ -303,7 +298,8 @@ export default function SetListView({
         s.lyricsStatus === 'pending' ||
         s.lyricsStatus === 'attention' ||
         s.lyricsStatus === 'failed' ||
-        missingServerExtras(s))
+        // Same predicate fetchAllLyrics uses internally, so the two can't disagree
+        needsServerData(s))
     ))
   }
 
