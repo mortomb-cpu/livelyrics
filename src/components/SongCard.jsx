@@ -29,7 +29,10 @@ export default function SongCard({
   if (compact) {
     // Compact version for Additional Songs panel (two-column grid)
     return (
-      <div className={`rounded-lg px-2.5 py-1.5 flex items-center gap-2 group transition-all ${
+      // h-full: grid rows are as tall as their tallest card, and now that long
+      // titles wrap, a one-line card left a gap under it. Filling the row makes
+      // both cards in a row the same height instead.
+      <div className={`h-full rounded-lg px-2.5 py-1.5 flex items-center gap-2 group transition-all ${
         isDragging
           ? 'bg-indigo-900/50 ring-2 ring-indigo-500 shadow-lg'
           : needsAttention

@@ -268,6 +268,7 @@ export default function SetListView({
           // Lyrics arrived, so whatever the file was missing no longer matters —
           // clear the amber "Needs info" flag.
           const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
+          if (r.discoveredArtist) updates.artist = r.discoveredArtist
           if (r.bpm) updates.bpm = r.bpm
           if (r.syncedLines) updates.syncedLines = r.syncedLines
           if (r.duration) updates.duration = r.duration

@@ -41,7 +41,12 @@ async function fetchFromLrclib(artist, title) {
     if (response.ok) {
       const results = await response.json();
       if (results.length > 0 && results[0].plainLyrics) {
-        return { lyrics: results[0].plainLyrics.trim(), source: 'lrclib.net' };
+        return {
+          lyrics: results[0].plainLyrics.trim(),
+          source: 'lrclib.net',
+          // The source knows who performs it, even when the caller didn't.
+          foundArtist: results[0].artistName || null
+        };
       }
     }
   } catch (e) {
@@ -131,14 +136,24 @@ async function fetchFromGenius(artist, title) {
     const hits = searchData.response?.hits;
     if (!hits || hits.length === 0) return null;
 
-    // Find the best match — check that artist roughly matches (if we have one)
+    // Find the best match — check that artist roughly matches (if we have one).
+    // Normalization keeps letters/digits from any script: [a-z0-9] reduced a
+    // Hebrew artist to "", and "".includes("") matched every hit blindly.
+    const normName = (s) => (s || '')
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^\p{L}\p{N}]/gu, '');
+
     let songUrl = null;
-    if (artist) {
-      const artistLower = artist.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let foundArtist = null;
+    const normArtist = normName(artist);
+    if (normArtist) {
       for (const hit of hits.slice(0, 5)) {
-        const hitArtist = (hit.result?.primary_artist?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (hitArtist.includes(artistLower) || artistLower.includes(hitArtist)) {
+        const hitArtist = normName(hit.result?.primary_artist?.name);
+        if (hitArtist && (hitArtist.includes(normArtist) || normArtist.includes(hitArtist))) {
           songUrl = hit.result?.url;
+          foundArtist = hit.result?.primary_artist?.name || null;
           break;
         }
       }
@@ -146,6 +161,7 @@ async function fetchFromGenius(artist, title) {
     // Fallback to first result if no artist match or no artist provided
     if (!songUrl && hits[0]?.result?.url) {
       songUrl = hits[0].result.url;
+      foundArtist = hits[0].result?.primary_artist?.name || null;
     }
     if (!songUrl) return null;
 
@@ -232,13 +248,30 @@ async function fetchFromGenius(artist, title) {
     }).join('\n').trim();
 
     if (lyrics.length > 50) {
-      console.log(`[lyrics] Found via Genius: ${artist} - ${title}`);
-      return { lyrics, source: 'genius.com' };
+      console.log(`[lyrics] Found via Genius: ${foundArtist || artist} - ${title}`);
+      return { lyrics, source: 'genius.com', foundArtist };
     }
   } catch (e) {
     console.log(`[lyrics] Genius failed: ${e.message}`);
   }
   return null;
+}
+
+const HEBREW = /[֐-׿]/;
+
+/**
+ * Genius lists Israeli acts bilingually — "Hava Alberstein - חוה אלברשטיין".
+ * Keep the half written in the same script as the song title, so a Hebrew set
+ * list reads in Hebrew throughout.
+ */
+function tidyArtist(name, title) {
+  if (!name) return null;
+  const parts = name.split(/\s+-\s+/).map(p => p.trim()).filter(Boolean);
+  if (parts.length !== 2) return name.trim();
+
+  const wantHebrew = HEBREW.test(title || '');
+  const match = parts.find(p => HEBREW.test(p) === wantHebrew);
+  return (match || parts[0]).trim();
 }
 
 /**
@@ -582,7 +615,13 @@ app.get('/api/lyrics', async (req, res) => {
     // If no lyrics results, retry with cleaned title
     let finalResults = allResults;
     if (finalResults.length === 0) {
-      const cleanTitle = title.replace(/['']/g, '').replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      // Keep letters from any script — [^a-zA-Z0-9 ] blanked Hebrew titles
+      // entirely and retried the search with an empty string.
+      const cleanTitle = title
+        .replace(/['']/g, '')
+        .replace(/[^\p{L}\p{N} ]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (cleanTitle !== title) {
         console.log(`[lyrics] Retrying with cleaned title: "${cleanTitle}"`);
         finalResults = await fetchAllSources(artist, cleanTitle);
@@ -594,7 +633,17 @@ app.get('/api/lyrics', async (req, res) => {
       const bestLyrics = pickBestVersion(finalResults);
       console.log(`[lyrics] Picked best version for "${title}" by ${artist}`);
 
-      const response = { lyrics: bestLyrics, artist, title, bpm };
+      // Report the artist the sources actually named. Previously this echoed
+      // back whatever the caller sent, so a title-only lookup could never learn
+      // one — English only appeared to work because 220 titles are hardcoded
+      // client-side, and Hebrew has no such table.
+      const discovered = tidyArtist(
+        finalResults.map(r => r.foundArtist).find(Boolean) || null,
+        title
+      );
+
+      const response = { lyrics: bestLyrics, artist: artist || discovered, title, bpm };
+      if (!artist && discovered) response.discoveredArtist = discovered;
       if (syncData) {
         response.syncedLines = syncData.syncedLines;
         response.duration = syncData.duration;

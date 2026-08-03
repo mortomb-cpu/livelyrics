@@ -37,7 +37,9 @@ export async function fetchLyrics(artist, title, { useCache = true } = {}) {
     lyrics: data.lyrics,
     bpm: data.bpm || 120,
     syncedLines: data.syncedLines || null,
-    duration: data.duration || null
+    duration: data.duration || null,
+    // Only set when we asked without an artist and the source named one.
+    discoveredArtist: data.discoveredArtist || null
   }
 }
 
@@ -118,6 +120,8 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
           bpm: result.bpm,
           syncedLines: result.syncedLines,
           duration: result.duration,
+          // Fill in an artist the set list never had — never overwrite one it did.
+          discoveredArtist: song.artist ? null : result.discoveredArtist,
           status: song._cachedLyrics ? 'cached' : 'fetched'
         }
       })
