@@ -241,10 +241,13 @@ function render() {
     var gi = 0;
     for (var si = 0; si < sections.length; si++) {
       var s = sections[si], lh = '';
-      if (s.label) lh += '<div class="section-label">' + esc(s.label) + '</div>';
+      if (s.label) lh += '<div class="section-label" dir="auto">' + esc(s.label) + '</div>';
       for (var li = 0; li < s.lines.length; li++) {
         var isActive = gi === currentLineIndex && ((voiceEnabled && isListening) || (cloudVoiceEnabled && isCloudListening) || (timedEnabled && timedRunning));
-        lh += '<p class="line' + (isActive ? ' active' : '') + '" id="line-' + si + '-' + li + '" style="font-size:' + fontSize + 'px">' + esc(s.lines[li]) + '</p>';
+        // dir="auto" so Hebrew lines lay out right-to-left. Without it the
+        // exported page rendered every lyric left-to-right, unlike the in-app
+        // perform view.
+        lh += '<p class="line' + (isActive ? ' active' : '') + '" id="line-' + si + '-' + li + '" dir="auto" style="font-size:' + fontSize + 'px">' + esc(s.lines[li]) + '</p>';
         gi++;
       }
       sectionsHTML += '<div class="section">' + lh + '</div>';
@@ -259,7 +262,7 @@ function render() {
   // Next song
   var nextHTML = '';
   if (!isSurprise && currentSongIdx < SONGS.length - 1) {
-    nextHTML = '<div class="next-bar"><span class="next-label">Next:</span><span class="next-title">' + esc(SONGS[currentSongIdx + 1].title) + '</span></div>';
+    nextHTML = '<div class="next-bar"><span class="next-label">Next:</span><span class="next-title" dir="auto">' + esc(SONGS[currentSongIdx + 1].title) + '</span></div>';
   } else if (!isSurprise) {
     nextHTML = '<div class="next-bar"><span class="next-label">Last song</span></div>';
   } else {
@@ -279,7 +282,7 @@ function render() {
     '<div class="topbar">' +
       '<div class="topbar-left">' +
         (isSurprise ? '<span class="surprise-label">Surprise</span>' : '') +
-        '<span class="song-name' + (isSurprise ? ' surprise' : '') + '">' + esc(song.title) + '</span>' +
+        '<span class="song-name' + (isSurprise ? ' surprise' : '') + '" dir="auto">' + esc(song.title) + '</span>' +
         '<span class="song-pos">' + (isSurprise ? '' : (currentSongIdx+1) + '/' + SONGS.length) + '</span>' +
       '</div>' +
       '<div class="topbar-right">' +
@@ -315,7 +318,7 @@ function renderSetListOverlay() {
     var isCurrent = i === currentSongIdx && !librarySong;
     items += '<button class="overlay-item' + (isCurrent ? ' current' : '') + '" onclick="jumpToSong(' + i + ')">' +
       '<span class="overlay-num">' + num + '</span>' +
-      '<div class="overlay-info"><div class="overlay-title">' + esc(s.title) + '</div>' +
+      '<div class="overlay-info"><div class="overlay-title" dir="auto">' + esc(s.title) + '</div>' +
       (s.artist ? '<div class="overlay-artist">' + esc(s.artist) + '</div>' : '') + '</div>' +
       (isCurrent ? '<span class="overlay-badge">Now playing</span>' : '') +
     '</button>';
@@ -330,7 +333,7 @@ function renderLibraryOverlay() {
   for (var i = 0; i < LIBRARY.length; i++) {
     var s = LIBRARY[i];
     items += '<button class="lib-card" onclick="pickLibrarySong(' + i + ')">' +
-      '<div class="overlay-title">' + esc(s.title) + '</div>' +
+      '<div class="overlay-title" dir="auto">' + esc(s.title) + '</div>' +
       (s.artist ? '<div class="overlay-artist">' + esc(s.artist) + '</div>' : '') + '</button>';
   }
   if (items === '') items = '<p style="text-align:center;color:#64748b;padding:32px">No additional songs in library</p>';
