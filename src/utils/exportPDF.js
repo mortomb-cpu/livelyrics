@@ -82,14 +82,12 @@ export async function buildSetListPDF(orderedSets, dateStr) {
   const hebrewReady = needsHebrew ? await attachHebrewFont(doc) : false
   const face = hebrewReady ? 'NotoSansHebrew' : 'helvetica'
 
-  // Hebrew runs right-to-left; jsPDF reorders the glyphs only when told to,
-  // and the flag is per-call state, so set it around each string.
-  const drawText = (text, x, y, opts) => {
-    const rtl = hebrewReady && HEBREW.test(text)
-    if (rtl) doc.setR2L(true)
-    doc.text(text, x, y, opts)
-    if (rtl) doc.setR2L(false)
-  }
+  // Deliberately no setR2L. jsPDF already emits Hebrew in the right visual
+  // order with an embedded Unicode font; turning R2L on reverses it a second
+  // time and the text comes out backwards. Verified by rendering "את" and
+  // checking which glyph lands on the right: plain puts א on the right (correct),
+  // setR2L(true) puts it on the left.
+  const drawText = (text, x, y, opts) => doc.text(text, x, y, opts)
 
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
@@ -105,8 +103,13 @@ export async function buildSetListPDF(orderedSets, dateStr) {
   const available = pageH - margin * 2 - headerBlock - footerBlock
   const baseSetHeader = 22
   const baseRow = 18
-  const needed = orderedSets.length * baseSetHeader + totalSongs * baseRow
-  const scale = needed > available ? Math.max(available / needed, 0.45) : 1
+  // A set costs its header bar plus the gap that follows it and the gap after
+  // its last song. Counting only the bar under-estimated every set, so with
+  // enough songs the next header was drawn on top of the previous set's last
+  // row and hid it completely.
+  const baseSetBlock = baseSetHeader + 6 + baseSetHeader * 0.4
+  const needed = orderedSets.length * baseSetBlock + totalSongs * baseRow
+  const scale = needed > available ? Math.max(available / needed, 0.35) : 1
   const setHeaderH = baseSetHeader * scale
   const rowH = baseRow * scale
   const titleFont = 22
@@ -138,7 +141,9 @@ export async function buildSetListPDF(orderedSets, dateStr) {
 
   let globalNum = 0
   for (const set of orderedSets) {
-    // set header bar
+    // Advance past the previous set's last row before painting this header bar.
+    // Without this the filled rect was drawn over that row and hid the song.
+    y += setHeaderH
     doc.setFillColor(240, 240, 240)
     doc.rect(leftX, y - setHeaderH + 5, rightX - leftX, setHeaderH - 3, 'F')
     doc.setFont(face, 'bold')
@@ -154,15 +159,28 @@ export async function buildSetListPDF(orderedSets, dateStr) {
       y += rowH
       doc.setFont(face, 'normal')
       doc.setTextColor(26, 26, 26)
-      // The number is drawn as its own left-to-right run. Folded into the title
-      // it became part of the right-to-left pass, which moved the full stop to
-      // the wrong side — "1." rendered as ".1" beside a Hebrew title.
+      // Number kept as its own run so it always sits at the left margin,
+      // whichever direction the title runs.
       const numText = `${globalNum}.`
       doc.text(numText, leftX + 4, y)
       // Small gap: the PDF importer joins runs this close with a space, and only
       // inserts a " - " separator across a wide column gap.
-      const titleX = leftX + 4 + doc.getTextWidth(numText) + 6
-      drawText(song.title || '', titleX, y)
+      let textX = leftX + 4 + doc.getTextWidth(numText) + 6
+
+      // A trailing "(No 6)" is Latin inside an otherwise Hebrew title. Left in
+      // one string it gets swept into the right-to-left pass and renders as
+      // "(6 oN)". Drawn as its own run, each piece is single-script and lays out
+      // unambiguously.
+      const rawTitle = song.title || ''
+      const parts = rawTitle.match(/^(.*?)\s*(\([^()]*\))\s*$/)
+      const mainTitle = parts ? parts[1] : rawTitle
+      const label = parts ? parts[2] : ''
+
+      drawText(mainTitle, textX, y)
+      if (label) {
+        textX += doc.getTextWidth(mainTitle) + 5
+        doc.text(label, textX, y)
+      }
       // artist right-aligned, lighter (separate run; importer rejoins via the big column gap)
       if (song.artist) {
         doc.setTextColor(140, 140, 140)
