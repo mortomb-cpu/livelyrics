@@ -6,24 +6,42 @@
  * hand-edits, instead of recreating the song from scratch.
  */
 
-/** Strip everything that varies between two spellings of the same song. */
+/**
+ * Strip everything that varies between two spellings of the same song.
+ *
+ * Keeps letters and digits from ANY script. Restricting this to [a-z0-9] erased
+ * Hebrew titles down to an empty string, and an empty key made the importer drop
+ * the song entirely — so a Hebrew set list imported as nothing at all.
+ *
+ * Combining marks are removed after decomposition, which folds Hebrew niqqud and
+ * Latin accents alike, so "שָׁלוֹם" and "שלום" are the same song.
+ */
+function stripToLettersAndDigits(text) {
+  return (text || '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]/gu, '')
+}
+
 export function normalizeTitle(title) {
-  return (title || '')
-    .toLowerCase()
-    // drop trailing qualifiers: "(live)", "[remastered 2011]", "- acoustic"
-    .replace(/[([].*?[)\]]/g, ' ')
-    .replace(/\s+-\s+(live|acoustic|remaster(ed)?|radio edit|single version).*$/i, ' ')
-    .replace(/&/g, 'and')
-    .replace(/^the\s+/, '')
-    .replace(/[^a-z0-9]/g, '')
+  return stripToLettersAndDigits(
+    (title || '')
+      .toLowerCase()
+      // drop trailing qualifiers: "(live)", "[remastered 2011]", "- acoustic"
+      .replace(/[([].*?[)\]]/g, ' ')
+      .replace(/\s+-\s+(live|acoustic|remaster(ed)?|radio edit|single version).*$/i, ' ')
+      .replace(/&/g, 'and')
+      .replace(/^the\s+/, '')
+  )
 }
 
 function normalizeArtist(artist) {
-  return (artist || '')
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/^the\s+/, '')
-    .replace(/[^a-z0-9]/g, '')
+  return stripToLettersAndDigits(
+    (artist || '')
+      .toLowerCase()
+      .replace(/&/g, 'and')
+      .replace(/^the\s+/, '')
+  )
 }
 
 /**

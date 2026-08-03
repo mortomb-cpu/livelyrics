@@ -39,6 +39,10 @@ export default function PerformView({ songs, allSongs = [] }) {
   // Flatten all lines for speech recognition
   const allLines = sections.flatMap(s => s.lines)
 
+  // Hebrew (and Arabic) lyrics have to lay out right-to-left, including the
+  // direction the active line grows from when it zooms.
+  const rtlLyrics = /[֐-׿؀-ۿ]/.test(allLines.join(' '))
+
   const {
     isListening, currentLineIndex, setCurrentLineIndex,
     confidence, supported, start: startListening, stop: stopListening, reset: resetRecognition
@@ -416,7 +420,7 @@ export default function PerformView({ songs, allSongs = [] }) {
 
           <div className="flex items-center gap-1.5 min-w-0 shrink">
             {librarySong && <span className="text-[9px] uppercase text-cyan-500 shrink-0">Surprise</span>}
-            <span className={`text-sm font-bold truncate ${librarySong ? 'text-cyan-400' : 'text-indigo-400'}`}>{currentSong.title}</span>
+            <span dir="auto" className={`text-sm font-bold ${librarySong ? 'text-cyan-400' : 'text-indigo-400'}`}>{currentSong.title}</span>
             <span className="text-[10px] text-slate-600 shrink-0">{currentSongIdx + 1}/{songs.length}</span>
           </div>
 
@@ -604,9 +608,10 @@ export default function PerformView({ songs, allSongs = [] }) {
                   <p
                     key={li}
                     id={`line-${si}-${li}`}
+                    dir={rtlLyrics ? 'rtl' : 'ltr'}
                     className={`leading-relaxed transition-all duration-300 ${
                       getLineHighlight(si, li)
-                        ? 'text-white lyrics-active scale-105 origin-left'
+                        ? `text-white lyrics-active scale-105 ${rtlLyrics ? 'origin-right' : 'origin-left'}`
                         : 'text-slate-200'
                     }`}
                     style={{ fontSize: `${fontSize}px`, lineHeight: 1.6 }}

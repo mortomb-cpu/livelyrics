@@ -210,16 +210,35 @@ export default function SetListView({
     if (restoreInputRef.current) restoreInputRef.current.value = ''
   }
 
-  const handleAddManual = () => {
-    if (!manualTitle.trim()) return
-    onAddSong({
-      title: manualTitle.trim(),
-      artist: manualArtist.trim(),
-      setIndex: sets.length - 1
-    })
+  const handleAddManual = async (toAdditional = false) => {
+    const title = manualTitle.trim()
+    if (!title) return
+    const artist = manualArtist.trim()
+
+    // If the library already has these lyrics, attach them now rather than
+    // making the user fetch a song we already have.
+    const cached = await findCachedLyrics(artist, title)
+
+    const added = onAddSong(
+      { title, artist, lyrics: cached || '', setIndex: sets.length - 1 },
+      { toAdditional }
+    )
+
+    if (!added) {
+      // addSong returns null for a song we already have — say so instead of
+      // appearing to do nothing.
+      setError(`"${title}" is already in your library.`)
+      setTimeout(() => setError(''), 4000)
+      return
+    }
+
     setManualTitle('')
     setManualArtist('')
     setAddingManual(false)
+    if (cached) {
+      setImportStatus(`Added "${title}" with lyrics from your library`)
+      setTimeout(() => setImportStatus(''), 3000)
+    }
   }
 
   const stopFetching = () => {
@@ -672,8 +691,8 @@ export default function SetListView({
                       className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-700/50"
                     >
                       <div className="min-w-0">
-                        <div className="text-slate-100 text-sm break-words leading-snug">{e.title}</div>
-                        <div className="text-slate-400 text-xs break-words leading-snug">
+                        <div dir="auto" className="text-slate-100 text-sm break-words leading-snug">{e.title}</div>
+                        <div dir="auto" className="text-slate-400 text-xs break-words leading-snug">
                           {e.artist || 'Unknown artist'} · {(e.lyrics || '').length} chars
                         </div>
                       </div>
@@ -740,22 +759,31 @@ export default function SetListView({
                 <div className="mb-4 p-4 bg-slate-800 rounded-xl">
                   <h3 className="text-sm font-medium text-slate-300 mb-3">Add Song Manually</h3>
                   <div className="flex gap-2 mb-2">
+                    {/* dir="auto" so a Hebrew title types and displays right-to-left */}
                     <input
                       type="text"
+                      dir="auto"
                       placeholder="Song title"
                       value={manualTitle}
                       onChange={e => setManualTitle(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddManual(false) }}
                       className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 text-sm"
                       autoFocus
                     />
                     <input
                       type="text"
-                      placeholder="Artist"
+                      dir="auto"
+                      placeholder="Artist (optional)"
                       value={manualArtist}
                       onChange={e => setManualArtist(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleAddManual(false) }}
                       className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 text-sm"
                     />
                   </div>
+                  <p className="text-xs text-slate-500 mb-3">
+                    The artist is optional — lyrics can be found from the title alone.
+                    Hebrew titles work; use the Hebrew spelling rather than a transliteration.
+                  </p>
                   <div className="flex gap-2 justify-end">
                     <button
                       onClick={() => setAddingManual(false)}
@@ -764,10 +792,17 @@ export default function SetListView({
                       Cancel
                     </button>
                     <button
-                      onClick={handleAddManual}
+                      onClick={() => handleAddManual(true)}
+                      title="Add to Additional Songs instead of the running order"
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-100 px-4 py-1.5 rounded-lg text-sm font-medium"
+                    >
+                      Add to library
+                    </button>
+                    <button
+                      onClick={() => handleAddManual(false)}
                       className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-lg text-sm font-medium"
                     >
-                      Add
+                      Add to {sets.length ? sets[sets.length - 1].name : 'Set 1'}
                     </button>
                   </div>
                 </div>

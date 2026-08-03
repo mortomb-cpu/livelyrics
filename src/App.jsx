@@ -48,23 +48,39 @@ function App() {
   const isDuplicate = (title, artist) =>
     findExistingSong({ title, artist }, songs) !== null
 
-  const addSong = (song) => {
+  /**
+   * Add one song by hand.
+   * `toAdditional` puts it straight in the library instead of a set — useful for
+   * building up a repertoire without touching the running order.
+   * Returns null if the song is already known, so the caller can say so.
+   */
+  const addSong = (song, { toAdditional = false } = {}) => {
     if (isDuplicate(song.title, song.artist)) return null
+
+    // Clamp: callers pass sets.length - 1, which is -1 when every set has been
+    // cleared. That used to index sets[-1] and throw.
+    const idx = Math.max(0, song.setIndex ?? 0)
+
     const newSong = {
       id: Date.now().toString() + Math.random().toString(36).slice(2),
       title: song.title,
       artist: song.artist,
       lyrics: song.lyrics || '',
       lyricsStatus: song.lyrics ? 'manual' : 'pending',
-      setIndex: song.setIndex ?? 0,
+      duration: song.duration ?? null,
+      setIndex: idx,
       needsAttention: song.needsAttention || false,
       rawTitle: song.rawTitle || ''
     }
     setSongs(prev => [...prev, newSong])
 
+    if (toAdditional) {
+      setAdditionalSongIds(prev => [...prev, newSong.id])
+      return newSong
+    }
+
     setSets(prev => {
       const updated = [...prev]
-      const idx = newSong.setIndex
       while (updated.length <= idx) {
         updated.push({ name: `Set ${updated.length + 1}`, songIds: [] })
       }

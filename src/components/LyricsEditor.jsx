@@ -146,10 +146,8 @@ export default function LyricsEditor({ song, onSave, onClose }) {
   }, [])
 
   const handleFetch = async () => {
-    if (!artist) {
-      setError('Artist name is needed to fetch lyrics')
-      return
-    }
+    // No artist required — the lyrics API resolves by title alone, which matters
+    // for the many set list entries that only ever carry a title.
     if (!title) {
       setError('Song title is needed to fetch lyrics')
       return
@@ -270,6 +268,7 @@ export default function LyricsEditor({ song, onSave, onClose }) {
           <div className="flex gap-2 mb-3">
             <input
               type="text"
+              dir="auto"
               placeholder="Song title"
               value={title}
               onChange={e => setTitle(e.target.value)}
@@ -277,6 +276,7 @@ export default function LyricsEditor({ song, onSave, onClose }) {
             />
             <input
               type="text"
+              dir="auto"
               placeholder="Artist"
               value={artist}
               onChange={e => setArtist(e.target.value)}
@@ -358,6 +358,7 @@ export default function LyricsEditor({ song, onSave, onClose }) {
         {/* Editor */}
         <div className="flex-1 overflow-hidden p-4">
           <textarea
+            dir="auto"
             value={lyrics}
             onChange={e => setLyrics(e.target.value)}
             placeholder={"Paste or type lyrics here...\n\nUse blank lines between verses.\nUse [Chorus], [Verse 1] etc. for section headers."}
