@@ -13,6 +13,7 @@ import { exportLibrary, importLibrary } from '../utils/libraryBackup'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
+import ConfirmDialog from './ConfirmDialog'
 
 export default function SetListView({
   songs, sets, encoreSongIds, additionalSongIds,
@@ -32,6 +33,7 @@ export default function SetListView({
   const [importStatus, setImportStatus] = useState('')
   const [libraryEntries, setLibraryEntries] = useState(null) // null = closed
   const [librarySearch, setLibrarySearch] = useState('')
+  const [confirmState, setConfirmState] = useState(null)
   const [cachedCount, setCachedCount] = useState(0)
   const [showEncore, setShowEncore] = useState(true)
   const [publishDialog, setPublishDialog] = useState(null) // null | 'token' | 'publishing' | 'success' | 'error'
@@ -140,6 +142,15 @@ export default function SetListView({
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  // Promise-based stand-in for window.confirm(), which silently returns false
+  // wherever dialogs are suppressed.
+  const askConfirm = (opts) => new Promise((resolve) => {
+    setConfirmState({
+      ...opts,
+      resolve: (answer) => { setConfirmState(null); resolve(answer) }
+    })
+  })
+
   const openLibrary = async () => {
     setLibrarySearch('')
     setLibraryEntries(await getAllCachedSongs())
@@ -148,10 +159,12 @@ export default function SetListView({
   // Delete one song's saved lyrics. Also drops the song from the current set
   // list if it's sitting there, so the two views don't disagree.
   const deleteFromLibrary = async (entry) => {
-    if (!confirm(
-      `Delete "${entry.title}" from the library?\n\n` +
-      `This removes its saved lyrics permanently. Other songs are not affected.`
-    )) return
+    const ok = await askConfirm({
+      title: `Delete "${entry.title}"?`,
+      message: 'This removes its saved lyrics permanently. Other songs are not affected.',
+      confirmLabel: 'Delete song'
+    })
+    if (!ok) return
 
     await deleteCachedSong(entry.artist, entry.title)
     const match = findExistingSong({ title: entry.title, artist: entry.artist }, songs)
@@ -478,11 +491,14 @@ export default function SetListView({
                 <div className="w-px h-4 bg-slate-700 mx-1" />
 
                 <button
-                  onClick={() => {
-                    if (confirm(
-                      `Clear the set list?\n\nAll ${songs.length} songs (and their lyrics) move to Additional Songs, ` +
-                      `so you can drag them into a new set list. Nothing is deleted.`
-                    )) { stopFetching(); onClearSetList() }
+                  onClick={async () => {
+                    const ok = await askConfirm({
+                      title: 'Clear the set list?',
+                      message: `All ${songs.length} songs (and their lyrics) move to Additional Songs, ` +
+                               `so you can drag them into a new set list. Nothing is deleted.`,
+                      confirmLabel: 'Clear set list'
+                    })
+                    if (ok) { stopFetching(); onClearSetList() }
                   }}
                   title="Empties the sets and encore — songs move to Additional Songs, nothing is deleted"
                   className="text-slate-500 hover:text-amber-400 hover:bg-amber-900/20 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors"
@@ -492,14 +508,19 @@ export default function SetListView({
 
                 <button
                   onClick={async () => {
-                    if (!confirm(
-                      `FACTORY RESET\n\nThis permanently deletes everything:\n` +
-                      `  • all ${songs.length} songs and the set list\n` +
-                      `  • the whole lyrics library (${cachedCount} saved)\n` +
-                      `  • your saved GitHub publish token\n\n` +
-                      `The app returns to a fresh install. This cannot be undone.`
-                    )) return
-                    if (!confirm('Last chance — really erase everything?')) return
+                    const ok = await askConfirm({
+                      title: 'Factory Reset',
+                      message: 'This returns the app to a fresh install. It cannot be undone.',
+                      bullets: [
+                        `All ${songs.length} songs and the set list`,
+                        `The whole lyrics library (${cachedCount} saved)`,
+                        'Your saved GitHub publish token',
+                        'Offline cached app files'
+                      ],
+                      confirmLabel: 'Erase everything',
+                      requireText: 'DELETE'
+                    })
+                    if (!ok) return
 
                     stopFetching()
                     setImportStatus('Erasing all data…')
@@ -534,6 +555,17 @@ export default function SetListView({
           onChange={handleRestore}
           className="hidden"
         />
+
+        {confirmState && (
+          <ConfirmDialog
+            title={confirmState.title}
+            message={confirmState.message}
+            bullets={confirmState.bullets}
+            confirmLabel={confirmState.confirmLabel}
+            requireText={confirmState.requireText}
+            onResolve={confirmState.resolve}
+          />
+        )}
 
         {/* Library manager — every song with saved lyrics, deletable one by one.
             Songs can live here without being in the current set list, so this is
@@ -883,7 +915,17 @@ export default function SetListView({
                 songs={songs}
                 additionalSongIds={additionalSongIds}
                 onEdit={(song) => setEditingSong(song)}
-                onRemove={(id) => onRemoveSong(id)}
+                onRemove={async (id) => {
+                  // Destructive here, unlike the ✕ on a song in a set (which
+                  // just moves it back to this panel).
+                  const song = songs.find(s => s.id === id)
+                  const ok = await askConfirm({
+                    title: `Delete "${song?.title || 'this song'}" from the library?`,
+                    message: 'This removes the song and its saved lyrics permanently. Other songs are not affected.',
+                    confirmLabel: 'Delete song'
+                  })
+                  if (ok) onRemoveSong(id)
+                }}
                 onAddSongs={onAddSongsToAdditional}
               />
             </div>

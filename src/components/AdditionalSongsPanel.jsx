@@ -106,15 +106,7 @@ export default function AdditionalSongsPanel({ songs, additionalSongIds, onEdit,
                           compact
                           isDragging={dragSnapshot.isDragging}
                           onEdit={() => onEdit(song)}
-                          onRemove={() => {
-                            // Destructive here, unlike the ✕ on a song in a set
-                            // (which just moves it back to this panel).
-                            if (confirm(
-                              `Delete "${song.title}" from the library?\n\n` +
-                              `This removes the song and its saved lyrics permanently. ` +
-                              `Other songs are not affected.`
-                            )) onRemove(song.id)
-                          }}
+                          onRemove={() => onRemove(song.id)}
                         />
                       </div>
                     )}
