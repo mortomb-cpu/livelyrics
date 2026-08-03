@@ -36,18 +36,15 @@ async function fetchFromLyricsOvh(artist, title) {
 
 async function fetchFromLrclib(artist, title) {
   try {
-    const url = `https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (response.ok) {
-      const results = await response.json();
-      if (results.length > 0 && results[0].plainLyrics) {
-        return {
-          lyrics: results[0].plainLyrics.trim(),
-          source: 'lrclib.net',
-          // The source knows who performs it, even when the caller didn't.
-          foundArtist: results[0].artistName || null
-        };
-      }
+    const results = await searchLrclib(artist, title);
+    const hit = results.find(r => r.plainLyrics);
+    if (hit) {
+      return {
+        lyrics: hit.plainLyrics.trim(),
+        source: 'lrclib.net',
+        // The source knows who performs it, even when the caller didn't.
+        foundArtist: hit.artistName || null
+      };
     }
   } catch (e) {
     console.log(`[lyrics] lrclib.net failed: ${e.message}`);
@@ -59,18 +56,43 @@ async function fetchFromLrclib(artist, title) {
  * Fetch synced (timestamped) lyrics from lrclib.net.
  * Returns array of { time: seconds, text: "lyric line" } or null.
  */
+/**
+ * Search lrclib, falling back to a title-only query.
+ *
+ * lrclib indexes Israeli acts under transliterated Latin names
+ * ("Hachaverim Shel Natasha"), so constraining the search to the Hebrew artist
+ * matches nothing — filling in a Hebrew artist name would otherwise cost the
+ * song its timings and length. The title alone is distinctive enough.
+ */
+async function searchLrclib(artist, title) {
+  const run = async (withArtist) => {
+    const params = new URLSearchParams({ track_name: title });
+    if (withArtist && artist) params.set('artist_name', artist);
+    const response = await fetch(`https://lrclib.net/api/search?${params}`, {
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!response.ok) return [];
+    const json = await response.json();
+    return Array.isArray(json) ? json : [];
+  };
+
+  if (artist) {
+    const withArtist = await run(true);
+    if (withArtist.length) return withArtist;
+  }
+  return run(false);
+}
+
 async function fetchSyncedLyrics(artist, title) {
   try {
-    const params = new URLSearchParams({ track_name: title });
-    if (artist) params.set('artist_name', artist);
-    const url = `https://lrclib.net/api/search?${params}`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!response.ok) return null;
-
-    const results = await response.json();
+    const results = await searchLrclib(artist, title);
     // Find first result with synced lyrics
     const match = results.find(r => r.syncedLyrics && r.syncedLyrics.trim().length > 50);
-    if (!match) return null;
+    if (!match) {
+      // No timed lyrics, but a plain hit still tells us how long the song is.
+      const anyWithDuration = results.find(r => r.duration > 0);
+      return anyWithDuration ? { syncedLines: null, duration: anyWithDuration.duration } : null;
+    }
 
     // Parse LRC format: [mm:ss.xx] text
     const lines = match.syncedLyrics.split('\n');
@@ -637,8 +659,12 @@ app.get('/api/lyrics', async (req, res) => {
       // back whatever the caller sent, so a title-only lookup could never learn
       // one — English only appeared to work because 220 titles are hardcoded
       // client-side, and Hebrew has no such table.
+      // Prefer a name written in the same script as the title — lrclib stores
+      // Israeli acts transliterated, Genius usually has the Hebrew.
+      const names = finalResults.map(r => r.foundArtist).filter(Boolean);
+      const wantHebrew = HEBREW.test(title);
       const discovered = tidyArtist(
-        finalResults.map(r => r.foundArtist).find(Boolean) || null,
+        names.find(n => HEBREW.test(n) === wantHebrew) || names[0] || null,
         title
       );
 

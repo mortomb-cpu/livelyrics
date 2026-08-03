@@ -39,10 +39,24 @@ export function parseDuration(text) {
 export function totalDuration(songs) {
   let seconds = 0
   let known = 0
-  let missing = 0
+  const missingTitles = []
   for (const s of songs) {
     if (s?.duration > 0) { seconds += s.duration; known++ }
-    else missing++
+    else if (s) missingTitles.push(s.title)
   }
-  return { seconds, known, missing, formatted: formatDuration(seconds) }
+  return {
+    seconds,
+    known,
+    missing: missingTitles.length,
+    missingTitles,
+    formatted: formatDuration(seconds)
+  }
+}
+
+/** Tooltip text naming exactly which songs aren't counted in a total. */
+export function missingTimeHint(total) {
+  if (!total.missing) return 'Total running time'
+  const names = total.missingTitles.filter(Boolean)
+  return `Not counted (no known length): ${names.join(', ')}\n` +
+         `Add a length by hand in the song's editor to include it.`
 }

@@ -144,13 +144,21 @@ export default function SongCard({
         ) : null}
       </div>
 
-      {/* Running time */}
-      {song.duration > 0 && (
+      {/* Running time. Songs with no known length show a dash rather than
+          nothing, so the "+1?" in a set total can actually be traced to a song. */}
+      {song.duration > 0 ? (
         <span
           className="text-xs text-slate-400 font-mono shrink-0 tabular-nums"
           title="Song length"
         >
           {formatDuration(song.duration)}
+        </span>
+      ) : !song.isMedley && (
+        <span
+          className="text-xs text-slate-600 font-mono shrink-0 tabular-nums"
+          title="No known length — not counted in the set total. Add one in the editor."
+        >
+          –:––
         </span>
       )}
 

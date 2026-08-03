@@ -10,7 +10,7 @@ import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } 
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import { factoryReset } from '../utils/factoryReset'
 import { exportLibrary, importLibrary } from '../utils/libraryBackup'
-import { totalDuration } from '../utils/duration'
+import { totalDuration, missingTimeHint } from '../utils/duration'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -521,7 +521,7 @@ export default function SetListView({
                   {showTotal.known > 0 && (
                     <span
                       className="text-slate-400"
-                      title={showTotal.missing ? `${showTotal.missing} song${showTotal.missing === 1 ? '' : 's'} have no known length` : 'Total show running time'}
+                      title={missingTimeHint(showTotal)}
                     >
                       {' · '}{showTotal.formatted}{showTotal.missing > 0 ? ` +${showTotal.missing}?` : ''}
                     </span>
@@ -819,7 +819,7 @@ export default function SetListView({
                           return (
                             <span
                               className="text-xs text-slate-400 tabular-nums"
-                              title={t.missing ? `${t.missing} song${t.missing === 1 ? '' : 's'} have no known length` : 'Total running time'}
+                              title={missingTimeHint(t)}
                             >
                               {t.formatted}
                               {t.missing > 0 && <span className="text-slate-500"> +{t.missing}?</span>}
