@@ -176,20 +176,10 @@ export async function buildSetListPDF(orderedSets, dateStr) {
       const mainTitle = parts ? parts[1] : rawTitle
       const label = parts ? parts[2] : ''
 
-      // Hebrew only comes out in the right order on jsPDF's right-aligned path —
-      // the artist column (align:'right') always rendered correctly while the
-      // left-aligned title next to it came out reversed. So a Hebrew title is
-      // drawn right-aligned at its own right edge, which puts it in exactly the
-      // same span as a left-aligned draw would.
-      const titleW = doc.getTextWidth(mainTitle)
-      if (HEBREW.test(mainTitle)) {
-        doc.text(mainTitle, textX + titleW, y, { align: 'right' })
-      } else {
-        doc.text(mainTitle, textX, y)
-      }
+      drawText(mainTitle, textX, y)
       if (label) {
-        // Pure Latin, so it needs no direction handling of its own.
-        doc.text(label, textX + titleW + 5, y)
+        textX += doc.getTextWidth(mainTitle) + 5
+        doc.text(label, textX, y)
       }
       // artist right-aligned, lighter (separate run; importer rejoins via the big column gap)
       if (song.artist) {
