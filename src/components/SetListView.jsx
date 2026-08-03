@@ -10,6 +10,7 @@ import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } 
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import { factoryReset } from '../utils/factoryReset'
 import { exportLibrary, importLibrary } from '../utils/libraryBackup'
+import { totalDuration } from '../utils/duration'
 import SongCard from './SongCard'
 import LyricsEditor from './LyricsEditor'
 import AdditionalSongsPanel from './AdditionalSongsPanel'
@@ -347,6 +348,12 @@ export default function SetListView({
   const failedCount = songs.filter(s => s.lyricsStatus === 'failed').length
   const songsWithLyrics = songs.filter(s => s.lyrics).length
   const setListSongCount = sets.reduce((sum, s) => sum + s.songIds.length, 0)
+  // Whole show: every set plus the encore, ignoring the reserve pile.
+  const showTotal = totalDuration(
+    [...sets.flatMap(s => s.songIds), ...encoreSongIds]
+      .map(id => songs.find(s => s.id === id))
+      .filter(Boolean)
+  )
   const songsWithoutLyrics = songs.filter(s => !s.lyrics).length
   const canPerform = hasSongs && songsWithLyrics > 0
   const offlineReady = hasSongs && songsWithoutLyrics === 0
@@ -485,7 +492,16 @@ export default function SetListView({
 
                 {/* Stats */}
                 <span className="text-[10px] text-slate-500 hidden md:inline">
-                  {setListSongCount} in sets{additionalSongIds.length > 0 ? ` · ${additionalSongIds.length} additional` : ''}
+                  {setListSongCount} in sets
+                  {showTotal.known > 0 && (
+                    <span
+                      className="text-slate-400"
+                      title={showTotal.missing ? `${showTotal.missing} song${showTotal.missing === 1 ? '' : 's'} have no known length` : 'Total show running time'}
+                    >
+                      {' · '}{showTotal.formatted}{showTotal.missing > 0 ? ` +${showTotal.missing}?` : ''}
+                    </span>
+                  )}
+                  {additionalSongIds.length > 0 ? ` · ${additionalSongIds.length} additional` : ''}
                 </span>
 
                 <div className="w-px h-4 bg-slate-700 mx-1" />
@@ -641,8 +657,8 @@ export default function SetListView({
                       className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-slate-700/50"
                     >
                       <div className="min-w-0">
-                        <div className="text-slate-100 text-sm truncate">{e.title}</div>
-                        <div className="text-slate-400 text-xs truncate">
+                        <div className="text-slate-100 text-sm break-words leading-snug">{e.title}</div>
+                        <div className="text-slate-400 text-xs break-words leading-snug">
                           {e.artist || 'Unknown artist'} · {(e.lyrics || '').length} chars
                         </div>
                       </div>
@@ -748,7 +764,22 @@ export default function SetListView({
                 return (
                   <div key={setIdx} className="mb-6">
                     <div className="flex items-center justify-between mb-2">
-                      <h2 className="text-lg font-semibold text-slate-200">{set.name}</h2>
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <h2 className="text-lg font-semibold text-slate-200">{set.name}</h2>
+                        {(() => {
+                          const t = totalDuration(set.songIds.map(id => songs.find(s => s.id === id)).filter(Boolean))
+                          if (!t.known) return null
+                          return (
+                            <span
+                              className="text-xs text-slate-400 tabular-nums"
+                              title={t.missing ? `${t.missing} song${t.missing === 1 ? '' : 's'} have no known length` : 'Total running time'}
+                            >
+                              {t.formatted}
+                              {t.missing > 0 && <span className="text-slate-500"> +{t.missing}?</span>}
+                            </span>
+                          )
+                        })()}
+                      </div>
                       {(
                         <button
                           onClick={() => onRemoveSet(setIdx)}
@@ -826,6 +857,10 @@ export default function SetListView({
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-slate-500">
                         {encoreSongIds.length} song{encoreSongIds.length !== 1 ? 's' : ''}
+                        {(() => {
+                          const t = totalDuration(encoreSongIds.map(id => songs.find(s => s.id === id)).filter(Boolean))
+                          return t.known ? <span className="text-slate-400 tabular-nums"> · {t.formatted}{t.missing > 0 ? ` +${t.missing}?` : ''}</span> : null
+                        })()}
                       </span>
                       <button
                         onClick={() => {

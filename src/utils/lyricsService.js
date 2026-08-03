@@ -78,11 +78,12 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
   const toFetchOnline = []
   for (const song of songs) {
     if (song.lyrics && song.lyricsStatus !== 'pending') {
-      // Has lyrics but missing syncedLines? Still need to fetch from server for synced data
-      if (!song.syncedLines) {
+      // Has lyrics but missing the server-only extras (synced timings, song
+      // length)? Still worth a fetch — the cache stores lyrics text alone.
+      if (!song.syncedLines || !song.duration) {
         toFetchOnline.push(song)
       } else {
-        results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm })
+        results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm, duration: song.duration })
         completed++
         onProgress?.(completed, songs.length, song.title, 'skipped')
       }

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { fetchLyrics } from '../utils/lyricsService'
 import { cacheLyrics, getAllCachedSongs, searchCachedSongs } from '../utils/lyricsCache'
+import { formatDuration, parseDuration } from '../utils/duration'
 import mammoth from 'mammoth'
 import * as pdfjsLib from 'pdfjs-dist'
 
@@ -113,6 +114,7 @@ async function extractTextFromWord(file) {
 export default function LyricsEditor({ song, onSave, onClose }) {
   const [title, setTitle] = useState(song.title || '')
   const [artist, setArtist] = useState(song.artist || '')
+  const [durationText, setDurationText] = useState(formatDuration(song.duration) || '')
   const [lyrics, setLyrics] = useState(song.lyrics || '')
   const [bpm, setBpm] = useState(song.bpm || '')
   const [fetching, setFetching] = useState(false)
@@ -235,6 +237,13 @@ export default function LyricsEditor({ song, onSave, onClose }) {
     if (artist !== song.artist) updates.artist = artist
     if (bpm) updates.bpm = parseInt(bpm)
 
+    // Blank clears the length; anything unparseable leaves it as it was.
+    if (durationText.trim() === '') updates.duration = null
+    else {
+      const secs = parseDuration(durationText)
+      if (secs !== null) updates.duration = secs
+    }
+
     // Save to persistent cache for future shows
     if (lyrics && artist && title) {
       cacheLyrics(artist, title, lyrics)
@@ -280,6 +289,14 @@ export default function LyricsEditor({ song, onSave, onClose }) {
               onChange={e => setBpm(e.target.value ? parseInt(e.target.value) : '')}
               min="40"
               max="250"
+              className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500"
+            />
+            <input
+              type="text"
+              placeholder="4:32"
+              value={durationText}
+              onChange={e => setDurationText(e.target.value)}
+              title="Song length — fetched automatically, or type it as m:ss for your live arrangement"
               className="w-20 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 text-sm focus:outline-none focus:border-indigo-500"
             />
           </div>

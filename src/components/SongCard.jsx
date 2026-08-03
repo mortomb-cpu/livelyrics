@@ -1,3 +1,5 @@
+import { formatDuration } from '../utils/duration'
+
 const statusColors = {
   pending: 'bg-slate-600',
   attention: 'bg-amber-600',
@@ -43,13 +45,20 @@ export default function SongCard({
           </svg>
         </div>
 
-        {/* Song info */}
+        {/* Song info — wraps rather than truncating; a set list is useless if
+            you can't read the whole title. */}
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-white truncate">{song.title}</div>
+          <div className="text-sm font-medium text-white break-words leading-snug">{song.title}</div>
           {song.artist && (
-            <div className="text-xs text-slate-400 truncate">{song.artist}</div>
+            <div className="text-xs text-slate-400 break-words leading-snug">{song.artist}</div>
           )}
         </div>
+
+        {song.duration > 0 && (
+          <span className="text-[10px] text-slate-400 font-mono shrink-0 tabular-nums">
+            {formatDuration(song.duration)}
+          </span>
+        )}
 
         {/* Status dot */}
         <div className={`w-2 h-2 rounded-full shrink-0 ${statusColors[song.lyricsStatus]}`}
@@ -120,15 +129,25 @@ export default function SongCard({
         </button>
       </div>
 
-      {/* Song info */}
+      {/* Song info — wraps rather than truncating. */}
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-white truncate">{song.title}</div>
+        <div className="font-medium text-white break-words leading-snug">{song.title}</div>
         {song.artist ? (
-          <div className="text-sm text-slate-400 truncate">{song.artist}</div>
+          <div className="text-sm text-slate-400 break-words leading-snug">{song.artist}</div>
         ) : needsAttention ? (
-          <div className="text-sm text-amber-400 truncate">Tap edit to set title, artist & lyrics</div>
+          <div className="text-sm text-amber-400 break-words leading-snug">Tap edit to set title, artist & lyrics</div>
         ) : null}
       </div>
+
+      {/* Running time */}
+      {song.duration > 0 && (
+        <span
+          className="text-xs text-slate-400 font-mono shrink-0 tabular-nums"
+          title="Song length"
+        >
+          {formatDuration(song.duration)}
+        </span>
+      )}
 
       {/* Status badge */}
       <span className={`${statusColors[song.lyricsStatus]} px-2 py-0.5 rounded-full text-xs text-white shrink-0`}>
