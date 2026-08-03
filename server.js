@@ -167,11 +167,22 @@ async function fetchFromGenius(artist, title) {
       .replace(/\p{M}/gu, '')
       .replace(/[^\p{L}\p{N}]/gu, '');
 
+    // Genius hosts translation and transcription accounts whose "songs" are
+    // someone else's lyrics rendered in another language. They match a title
+    // perfectly and are never what a performer wants on stage.
+    const isTranslationAccount = (name) =>
+      /translation|traducc|übersetz|תרגומים|переводы|genius\s*(romanizations?|english)/i.test(name || '');
+
+    const pool = hits.filter(h => !isTranslationAccount(h.result?.primary_artist?.name));
+    // If a translation page is all Genius has, treat it as no result. Handing a
+    // performer the wrong song's words is worse than handing them none.
+    if (!pool.length) return null;
+
     let songUrl = null;
     let foundArtist = null;
     const normArtist = normName(artist);
     if (normArtist) {
-      for (const hit of hits.slice(0, 5)) {
+      for (const hit of pool.slice(0, 5)) {
         const hitArtist = normName(hit.result?.primary_artist?.name);
         if (hitArtist && (hitArtist.includes(normArtist) || normArtist.includes(hitArtist))) {
           songUrl = hit.result?.url;
@@ -181,9 +192,9 @@ async function fetchFromGenius(artist, title) {
       }
     }
     // Fallback to first result if no artist match or no artist provided
-    if (!songUrl && hits[0]?.result?.url) {
-      songUrl = hits[0].result.url;
-      foundArtist = hits[0].result?.primary_artist?.name || null;
+    if (!songUrl && pool[0]?.result?.url) {
+      songUrl = pool[0].result.url;
+      foundArtist = pool[0].result?.primary_artist?.name || null;
     }
     if (!songUrl) return null;
 

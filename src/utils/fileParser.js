@@ -117,7 +117,7 @@ async function parseSpreadsheet(file) {
       continue
     }
 
-    let title = String(row[titleCol] || '').trim()
+    let title = stripPositionSuffix(String(row[titleCol] || '').trim())
     const artist = String(row[artistCol] || '').trim()
 
     if (!title) continue
@@ -404,6 +404,20 @@ async function parsePDF(file, onProgress) {
   return parseText(fullText)
 }
 
+/**
+ * Remove a trailing position marker: "Title (No 4)", "Title ( No 1)", "Title (#3)".
+ *
+ * Some set lists number songs in brackets after the title instead of in front.
+ * Left in place the number goes out with the search — "ארץ חדשה (No 4)" matched
+ * a Genius translations page and pulled in the wrong lyrics entirely.
+ *
+ * Limited to one or two digits so a title that genuinely ends in a year, like
+ * "1979 (1979)", survives.
+ */
+function stripPositionSuffix(title) {
+  return title.replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*$/i, '').trim()
+}
+
 function parseText(text) {
   const lines = text.split('\n').map(l => l.trim())
   const songs = []
@@ -415,6 +429,12 @@ function parseText(text) {
   // which OCR output triggers constantly, since row spacing in a rendered page
   // is irregular.
   const hasExplicitSets = lines.some(l => /^set\s*\d+\s*$/i.test(l))
+
+  // "1. Song" is unambiguous, but a bare "99 Red Balloons" is both a plausible
+  // list entry and a real title. Only treat a leading bare number as numbering
+  // when the file does it repeatedly — one such line is a title, many are a list.
+  const bareNumbered = lines.filter(l => /^\d{1,2}\s+\S/.test(l)).length
+  const usesBareNumbering = bareNumbered >= 3
 
   for (const line of lines) {
     // Empty line
@@ -477,8 +497,13 @@ function parseText(text) {
       }
     }
 
-    // Remove numbering like "1." or "1)" or "1 " from title
-    title = title.replace(/^\d+[\.\)\s]\s*/, '')
+    // Remove numbering like "1." or "1)" from the title, and a bare "1 " only
+    // when the file clearly numbers that way. Capped at two digits: set lists
+    // don't number past 99, and longer runs belong to the title ("1979").
+    title = title.replace(/^\d{1,2}[.)]\s*/, '')
+    if (usesBareNumbering) title = title.replace(/^\d{1,2}\s+/, '')
+    // ...and the same number written after it, "Title (No 4)"
+    title = stripPositionSuffix(title)
 
     // Detect "SET X" embedded in title (e.g., "Creep SET 1")
     const setMatch = title.match(/\s+SET\s*(\d+)\s*$/i)
