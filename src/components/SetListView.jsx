@@ -350,7 +350,7 @@ export default function SetListView({
     }
   }
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     const orderedSets = [
       ...sets.map((set) => ({
         name: set.name,
@@ -366,7 +366,15 @@ export default function SetListView({
 
     // Generate a real, text-layer PDF directly (no browser print dialog, so the
     // output is always a true PDF rather than an image from "Print to PDF").
-    exportSetListPDF(orderedSets)
+    // Async because a Hebrew set list has to embed a Unicode font first.
+    try {
+      setImportStatus('Building PDF…')
+      await exportSetListPDF(orderedSets)
+    } catch (err) {
+      setError(`PDF export failed: ${err.message}`)
+    } finally {
+      setImportStatus('')
+    }
   }
 
   const hasSongs = songs.length > 0

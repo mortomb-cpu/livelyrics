@@ -4,5 +4,6 @@ release
 .env
 *.local
 
-# OCR assets — copied from node_modules / downloaded by scripts/setup-ocr.mjs
+# Runtime binaries — copied from node_modules / downloaded by scripts/setup-assets.mjs
 public/tesseract/
+public/fonts/

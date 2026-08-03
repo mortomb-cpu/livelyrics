@@ -12,10 +12,11 @@
     "preview": "vite preview",
     "electron": "electron .",
     "dist": "npm run build && electron-builder",
-    "setup-ocr": "node scripts/setup-ocr.mjs",
-    "postinstall": "node scripts/setup-ocr.mjs"
+    "postinstall": "node scripts/setup-assets.mjs",
+    "setup-assets": "node scripts/setup-assets.mjs"
   },
   "dependencies": {
+    "@expo-google-fonts/noto-sans-hebrew": "^0.4.1",
     "@hello-pangea/dnd": "^18.0.1",
     "cheerio": "^1.0.0",
     "concurrently": "^9.1.0",

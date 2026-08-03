@@ -341,6 +341,20 @@ async function parsePDF(file, onProgress) {
       const x = item.transform[4]
       const y = item.transform[5]
 
+      // pdfjs synthesises whitespace-only items whose width spans the gap
+      // between two runs. Measuring from one of those makes every gap look like
+      // zero, which collapsed "Title" + "Artist" columns into a single string
+      // and broke re-importing an exported set list. Skip them and keep
+      // measuring from the last item that actually drew glyphs.
+      if (!item.str.trim()) {
+        if (item.hasEOL) {
+          if (currentLine.trim()) lines.push(currentLine.trim())
+          currentLine = ''
+          lastY = null
+        }
+        continue
+      }
+
       // If Y position changed significantly, it's a new line
       if (lastY !== null && Math.abs(y - lastY) > 3) {
         if (currentLine.trim()) {
@@ -502,6 +516,9 @@ function parseText(text) {
     // don't number past 99, and longer runs belong to the title ("1979").
     title = title.replace(/^\d{1,2}[.)]\s*/, '')
     if (usesBareNumbering) title = title.replace(/^\d{1,2}\s+/, '')
+    // In a right-to-left line the leading "1." is laid out at the visual end, so
+    // it extracts as "שיר .1". No real title ends in a full stop then digits.
+    title = title.replace(/\s+\.\d{1,2}$/, '')
     // ...and the same number written after it, "Title (No 4)"
     title = stripPositionSuffix(title)
 
