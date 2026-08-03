@@ -508,10 +508,16 @@ export default function SetListView({
 
                 <button
                   onClick={async () => {
+                    // Count what's actually in the sets and encore — `songs` is
+                    // the whole library, most of which is already in Additional
+                    // and isn't going anywhere.
+                    const moving = setListSongCount + encoreSongIds.length
                     const ok = await askConfirm({
                       title: 'Clear the set list?',
-                      message: `All ${songs.length} songs (and their lyrics) move to Additional Songs, ` +
-                               `so you can drag them into a new set list. Nothing is deleted.`,
+                      message:
+                        `The ${moving} song${moving === 1 ? '' : 's'} in your sets` +
+                        `${encoreSongIds.length ? ' and encore' : ''} move to Additional Songs, ` +
+                        `keeping their lyrics, so you can drag them into a new set list. Nothing is deleted.`,
                       confirmLabel: 'Clear set list'
                     })
                     if (ok) { stopFetching(); onClearSetList() }
