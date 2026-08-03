@@ -117,7 +117,7 @@ async function parseSpreadsheet(file) {
       continue
     }
 
-    let title = stripPositionSuffix(String(row[titleCol] || '').trim())
+    let title = String(row[titleCol] || '').trim()
     const artist = String(row[artistCol] || '').trim()
 
     if (!title) continue
@@ -418,20 +418,6 @@ async function parsePDF(file, onProgress) {
   return parseText(fullText)
 }
 
-/**
- * Remove a trailing position marker: "Title (No 4)", "Title ( No 1)", "Title (#3)".
- *
- * Some set lists number songs in brackets after the title instead of in front.
- * Left in place the number goes out with the search — "ארץ חדשה (No 4)" matched
- * a Genius translations page and pulled in the wrong lyrics entirely.
- *
- * Limited to one or two digits so a title that genuinely ends in a year, like
- * "1979 (1979)", survives.
- */
-function stripPositionSuffix(title) {
-  return title.replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*$/i, '').trim()
-}
-
 function parseText(text) {
   const lines = text.split('\n').map(l => l.trim())
   const songs = []
@@ -519,8 +505,10 @@ function parseText(text) {
     // In a right-to-left line the leading "1." is laid out at the visual end, so
     // it extracts as "שיר .1". No real title ends in a full stop then digits.
     title = title.replace(/\s+\.\d{1,2}$/, '')
-    // ...and the same number written after it, "Title (No 4)"
-    title = stripPositionSuffix(title)
+    // A trailing "(No 4)" is deliberately LEFT ALONE. It's something the user
+    // types to label their own running order, and titles are theirs to control.
+    // It's removed only when building a lyrics search query — see
+    // searchableTitle() in lyricsService.
 
     // Detect "SET X" embedded in title (e.g., "Creep SET 1")
     const setMatch = title.match(/\s+SET\s*(\d+)\s*$/i)

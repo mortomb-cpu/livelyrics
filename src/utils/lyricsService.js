@@ -4,10 +4,29 @@ import { findCachedLyrics, cacheLyrics } from './lyricsCache'
  * Fetch lyrics — checks persistent cache first, then fetches online.
  * Any successfully fetched lyrics are saved to cache for future use.
  */
+/**
+ * The title as the lyrics sources should see it.
+ *
+ * A set list often carries the performer's own annotations — "ארץ חדשה (No 4)"
+ * marks position in the running order. Those belong to the user and stay on the
+ * song, but sending them to a lyrics search matches the wrong thing: "(No 4)"
+ * pulled back a Genius translations page instead of the song.
+ *
+ * Only a bracketed position marker is removed. Qualifiers that are genuinely
+ * part of a title, like "(Live)" or "(Acoustic)", are left for the source to
+ * match on.
+ */
+export function searchableTitle(title) {
+  return (title || '')
+    .replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*$/i, '')
+    .trim() || title
+}
+
 export async function fetchLyrics(artist, title, { useCache = true } = {}) {
   if (!title) {
     throw new Error('Song title is required')
   }
+  const query = searchableTitle(title)
 
   // Check cache first — works with or without a known artist.
   // Callers that need server-only data (BPM, synced/timed lines) pass
@@ -19,8 +38,8 @@ export async function fetchLyrics(artist, title, { useCache = true } = {}) {
     }
   }
 
-  // Fetch from server
-  const params = new URLSearchParams({ title })
+  // Fetch from server using the searchable form, not the user's own label
+  const params = new URLSearchParams({ title: query })
   if (artist) params.set('artist', artist)
   const response = await fetch(`/api/lyrics?${params}`)
   const data = await response.json()
