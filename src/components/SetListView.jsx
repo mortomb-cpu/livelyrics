@@ -271,10 +271,19 @@ export default function SetListView({
   // alone just fine, so skipping them meant nothing got fetched at all.
   const isFetchable = (s) => s.title && !s.isMedley
 
+  // Song length and synced timings only come from the server — the lyrics cache
+  // stores text alone. A song can therefore have perfectly good lyrics and still
+  // be missing both, which is why this can't just test for missing lyrics.
+  const missingServerExtras = (s) => !s.syncedLines || !(s.duration > 0)
+
   const handleFetchAllLyrics = () => {
     runFetch(songs.filter(s =>
       isFetchable(s) &&
-      (!s.lyrics || s.lyricsStatus === 'pending' || s.lyricsStatus === 'attention' || s.lyricsStatus === 'failed')
+      (!s.lyrics ||
+        s.lyricsStatus === 'pending' ||
+        s.lyricsStatus === 'attention' ||
+        s.lyricsStatus === 'failed' ||
+        missingServerExtras(s))
     ))
   }
 
