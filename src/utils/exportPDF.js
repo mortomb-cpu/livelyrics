@@ -82,12 +82,25 @@ export async function buildSetListPDF(orderedSets, dateStr) {
   const hebrewReady = needsHebrew ? await attachHebrewFont(doc) : false
   const face = hebrewReady ? 'NotoSansHebrew' : 'helvetica'
 
-  // Deliberately no setR2L. jsPDF already emits Hebrew in the right visual
-  // order with an embedded Unicode font; turning R2L on reverses it a second
-  // time and the text comes out backwards. Verified by rendering "את" and
-  // checking which glyph lands on the right: plain puts א on the right (correct),
-  // setR2L(true) puts it on the left.
-  const drawText = (text, x, y, opts) => doc.text(text, x, y, opts)
+  // Hebrew needs BOTH switches together: setR2L(true) AND a right-aligned draw.
+  // Either one alone comes out reversed, which is why this took several passes —
+  // the artist column looked right only because it happened to be right-aligned,
+  // and turning R2L on without alignment (or vice versa) just moved the fault.
+  const drawText = (text, x, y, opts) => {
+    const rtl = hebrewReady && HEBREW.test(text)
+    if (rtl) doc.setR2L(true)
+    doc.text(text, x, y, opts)
+    if (rtl) doc.setR2L(false)
+  }
+
+  /** Draw a string at [x, x+width], right-aligned when it is Hebrew. */
+  const drawStart = (text, x, y) => {
+    if (hebrewReady && HEBREW.test(text)) {
+      drawText(text, x + doc.getTextWidth(text), y, { align: 'right' })
+    } else {
+      doc.text(text, x, y)
+    }
+  }
 
   const pageW = doc.internal.pageSize.getWidth()
   const pageH = doc.internal.pageSize.getHeight()
@@ -176,10 +189,10 @@ export async function buildSetListPDF(orderedSets, dateStr) {
       const mainTitle = parts ? parts[1] : rawTitle
       const label = parts ? parts[2] : ''
 
-      drawText(mainTitle, textX, y)
+      drawStart(mainTitle, textX, y)
       if (label) {
-        textX += doc.getTextWidth(mainTitle) + 5
-        doc.text(label, textX, y)
+        // Pure Latin, so it needs neither the R2L flag nor right alignment.
+        doc.text(label, textX + doc.getTextWidth(mainTitle) + 5, y)
       }
       // artist right-aligned, lighter (separate run; importer rejoins via the big column gap)
       if (song.artist) {
