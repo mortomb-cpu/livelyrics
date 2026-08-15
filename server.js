@@ -704,6 +704,35 @@ app.get('/api/lyrics', async (req, res) => {
 });
 
 // Health check
+/**
+ * Song details only — length, synced timings, BPM. No lyrics.
+ *
+ * Fetching lyrics means scraping several sources and takes seconds per song.
+ * A song that already has its words but is missing its running time only needs
+ * lrclib, which is one fast lookup, so filling in times no longer costs a full
+ * re-download of the whole library.
+ */
+app.get('/api/songinfo', async (req, res) => {
+  const { artist, title } = req.query;
+  if (!title) return res.status(400).json({ error: 'title required' });
+
+  try {
+    const [syncData, bpm] = await Promise.all([
+      fetchSyncedLyrics(artist, title),
+      fetchBPM(artist, title)
+    ]);
+    res.json({
+      title,
+      artist: artist || null,
+      bpm: bpm || null,
+      duration: syncData?.duration || null,
+      syncedLines: syncData?.syncedLines || null
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });

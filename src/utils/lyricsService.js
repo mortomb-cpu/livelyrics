@@ -98,9 +98,40 @@ async function fetchLyricsWithRetry(artist, title, abortSignal, attempts = 3) {
  * skip check inside fetchAllLyrics. Those were separate copies twice over, and
  * both times they drifted: the caller selected a song and this function then
  * skipped it, so the fetch silently did nothing.
+ *
+ * Songs already holding lyrics — in the set list or recovered from the library —
+ * are never re-downloaded.
  */
 export function needsServerData(song) {
-  return !song.syncedLines || !(song.duration > 0) || !song.artist
+  // Only songs with no lyrics at all. Treating "missing synced lines / duration /
+  // artist" as a reason to refetch meant a full library went back to the network
+  // on every press — 57 songs and several minutes to re-download words already
+  // held. Those extras are filled in when a song is fetched for the first time;
+  // a song that already has its words is left alone.
+  return !song.lyrics || !song.lyrics.trim()
+}
+
+/** Does this song have its words but not its running time / timings? */
+export function needsSongDetails(song) {
+  return !needsServerData(song) && (!(song.duration > 0) || !song.syncedLines)
+}
+
+/**
+ * Fetch only a song's length, timings and BPM — no lyrics.
+ * One lrclib lookup rather than a scrape of every lyrics source, so filling in
+ * missing times across a library is quick and never re-downloads words.
+ */
+export async function fetchSongDetails(artist, title) {
+  const params = new URLSearchParams({ title: searchableTitle(title) })
+  if (artist) params.set('artist', artist)
+  const res = await fetch(`/api/songinfo?${params}`)
+  if (!res.ok) throw new Error('Could not read song details')
+  const data = await res.json()
+  return {
+    bpm: data.bpm || null,
+    duration: data.duration || null,
+    syncedLines: data.syncedLines || null
+  }
 }
 
 /**
@@ -111,14 +142,15 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
   const results = []
   let completed = 0
 
-  // Phase 1: quickly resolve cached/skipped songs (instant, no network)
+  // Phase 1: sort songs into "needs its words" (slow) and "only needs its
+  // running time" (one quick lookup). Anything already complete is skipped
+  // without touching the network.
   const toFetchOnline = []
+  const toDetailOnly = []
   for (const song of songs) {
     if (song.lyrics && song.lyricsStatus !== 'pending') {
-      // Has lyrics but missing something only the server has? Still worth a fetch.
-      if (needsServerData(song)) {
-        toFetchOnline.push(song)
-      } else {
+      if (needsSongDetails(song)) toDetailOnly.push(song)
+      else {
         results.push({ id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm, duration: song.duration })
         completed++
         onProgress?.(completed, songs.length, song.title, 'skipped')
@@ -134,6 +166,25 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
     }
 
     toFetchOnline.push(song)
+  }
+
+  // Details-only pass: cheap, so a wider batch is fine.
+  for (let i = 0; i < toDetailOnly.length; i += 6) {
+    if (abortSignal?.aborted) break
+    const batch = toDetailOnly.slice(i, i + 6)
+    const settled = await Promise.allSettled(batch.map(async (song) => {
+      onProgress?.(completed, songs.length, song.title, 'details')
+      const d = await fetchSongDetails(song.artist, song.title)
+      return { id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, ...d }
+    }))
+    settled.forEach((r, j) => {
+      const song = batch[j]
+      results.push(r.status === 'fulfilled'
+        ? r.value
+        : { id: song.id, lyrics: song.lyrics, status: song.lyricsStatus, syncedLines: song.syncedLines, bpm: song.bpm, duration: song.duration })
+      completed++
+      onProgress?.(completed, songs.length, song.title, r.status === 'fulfilled' ? 'success' : 'skipped')
+    })
   }
 
   // Phase 2: fetch remaining songs in small parallel batches. Kept low (2) so

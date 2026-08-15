@@ -29,6 +29,10 @@ export function normalizeTitle(title) {
       .toLowerCase()
       // drop trailing qualifiers: "(live)", "[remastered 2011]", "- acoustic"
       .replace(/[([].*?[)\]]/g, ' ')
+      // ...and a bare position marker, "Title No 6". The same song is written
+      // "(No 6)" by hand and "No 6" by a printed sheet; without this they are
+      // two different songs and importing the sheet duplicates the library.
+      .replace(/\s+(?:no\.?|num\.?|#)\s*\d{1,2}\s*$/i, ' ')
       .replace(/\s+-\s+(live|acoustic|remaster(ed)?|radio edit|single version).*$/i, ' ')
       .replace(/&/g, 'and')
       .replace(/^the\s+/, '')

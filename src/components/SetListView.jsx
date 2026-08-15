@@ -5,7 +5,7 @@ import { parseFile } from '../utils/fileParser'
 import { exportForTablet } from '../utils/exportTablet'
 import { exportSetListPDF } from '../utils/exportPDF'
 import { publishToCloud, getStoredToken, setStoredToken, getPublicURL, qrCodeSrc } from '../utils/publishToCloud'
-import { fetchAllLyrics, needsServerData } from '../utils/lyricsService'
+import { fetchAllLyrics, needsServerData, needsSongDetails } from '../utils/lyricsService'
 import { getCacheCount, findCachedLyrics, getAllCachedSongs, deleteCachedSong } from '../utils/lyricsCache'
 import { findExistingSong, normalizeTitle } from '../utils/songMatch'
 import { factoryReset } from '../utils/factoryReset'
@@ -298,8 +298,11 @@ export default function SetListView({
         s.lyricsStatus === 'pending' ||
         s.lyricsStatus === 'attention' ||
         s.lyricsStatus === 'failed' ||
-        // Same predicate fetchAllLyrics uses internally, so the two can't disagree
-        needsServerData(s))
+        // Same predicates fetchAllLyrics uses internally, so the two can't
+        // disagree: songs with no words, and songs whose words are here but
+        // whose running time is not.
+        needsServerData(s) ||
+        needsSongDetails(s))
     ))
   }
 

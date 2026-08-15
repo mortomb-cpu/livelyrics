@@ -99,9 +99,10 @@ async function parseSpreadsheet(file) {
 
     // Section header row. Previously this stopped parsing and discarded every
     // song below it; now it routes them to the encore / additional zone instead.
-    const sectionMatch = firstCell.match(/^(backup|extras?|reserve|encore|additionals?|additonals?)\b/i)
+    const sectionMatch = firstCell.match(/^(backup|extras?|reserves?|encore|additionals?|additonals?)\b/i)
     if (sectionMatch) {
-      currentSection = /^encore/i.test(sectionMatch[1]) ? 'encore' : 'additional'
+      // Reserve pool and encore mean the same thing — songs held for the end.
+      currentSection = /^(encore|reserve)/i.test(sectionMatch[1]) ? 'encore' : 'additional'
       continue
     }
 
@@ -476,9 +477,11 @@ function parseText(text) {
     // Section headers (any spelling). These used to stop parsing entirely, which
     // silently dropped every song below them. Instead, route what follows to the
     // encore or additional-songs zone so nothing is lost on import.
-    const sectionMatch = line.match(/^(backup|extras?|reserve|encore|additionals?|additonals?)\b/i)
+    const sectionMatch = line.match(/^(backup|extras?|reserves?|reserve pool|encore|additionals?|additonals?)\b/i)
     if (sectionMatch) {
-      currentSection = /^encore/i.test(sectionMatch[1]) ? 'encore' : 'additional'
+      // A reserve pool is the same thing as an encore: songs held back and
+      // called at the end if the room wants more. Both go to the encore zone.
+      currentSection = /^(encore|reserve)/i.test(sectionMatch[1]) ? 'encore' : 'additional'
       continue
     }
 
