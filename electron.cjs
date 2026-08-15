@@ -7,42 +7,7 @@ let mainWindow;
 let serverProcess;
 const SERVER_PORT = 3847;
 
-// Hardcode node path as fallback
-const NODE_PATHS = [
-  'C:\\Program Files\\nodejs\\node.exe',
-  'C:\\Program Files (x86)\\nodejs\\node.exe',
-  path.join(process.env.APPDATA || '', '..', 'Local', 'Programs', 'nodejs', 'node.exe'),
-];
-
-function findNode() {
-  const fs = require('fs');
-
-  // Try system PATH first
-  try {
-    const { execSync } = require('child_process');
-    const result = execSync('where node', { encoding: 'utf8', timeout: 5000 }).trim().split(/\r?\n/)[0].trim();
-    if (fs.existsSync(result)) return result;
-  } catch (e) {}
-
-  // Try known paths
-  for (const p of NODE_PATHS) {
-    if (fs.existsSync(p)) return p;
-  }
-
-  return null;
-}
-
 function startServer() {
-  const nodePath = findNode();
-  if (!nodePath) {
-    const { dialog } = require('electron');
-    dialog.showErrorBox('Node.js Required', 'LiveLyrics requires Node.js to be installed.\n\nPlease install Node.js from https://nodejs.org and try again.');
-    app.quit();
-    return Promise.reject(new Error('Node.js not found'));
-  }
-
-  console.log('Using Node.js:', nodePath);
-
   // In packaged app, server.js is unpacked outside the ASAR archive
   const isPackaged = app.isPackaged;
   const appPath = isPackaged
@@ -54,14 +19,16 @@ function startServer() {
   console.log('Packaged:', isPackaged);
   console.log('Server path:', serverPath);
   console.log('Server cwd:', serverCwd);
-  console.log('Node path:', nodePath);
 
-  serverProcess = spawn(`"${nodePath}"`, [`"${serverPath}"`], {
-    env: { ...process.env, PORT: String(SERVER_PORT) },
+  // Run the server on Electron's OWN bundled Node, via ELECTRON_RUN_AS_NODE.
+  // The app used to hunt for a system Node install and refuse to start without
+  // one, which made it not really standalone — a machine without Node got an
+  // error dialog instead of an app. Electron ships a Node runtime already.
+  serverProcess = spawn(process.execPath, [serverPath], {
+    env: { ...process.env, PORT: String(SERVER_PORT), ELECTRON_RUN_AS_NODE: '1' },
     cwd: serverCwd,
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    shell: true
+    windowsHide: true
   });
 
   serverProcess.stdout?.on('data', (d) => console.log('[server]', d.toString().trim()));

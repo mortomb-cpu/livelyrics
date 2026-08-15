@@ -58,7 +58,8 @@
     "asarUnpack": [
       "server.js",
       "dist/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "package.json"
     ],
     "win": {
       "target": "nsis"
