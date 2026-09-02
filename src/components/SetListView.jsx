@@ -269,14 +269,14 @@ export default function SetListView({
           // clear the amber "Needs info" flag.
           const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
           if (r.discoveredArtist) updates.artist = r.discoveredArtist
-          // Only apply canonical corrections for spelling fixes — skip if
-          // the title uses a different script (e.g. Hebrew original → English)
+          // Only apply canonical corrections for English songs — Hebrew
+          // titles come from the user's set list and should never be touched
           const song = songs.find(s => s.id === r.id)
-          const hasHebrew = (s) => /[֐-׿]/.test(s)
-          if (r.canonicalTitle && song && hasHebrew(song.title) === hasHebrew(r.canonicalTitle)) {
+          const hasHebrew = (s) => /[֐-׿]/.test(s || '')
+          if (r.canonicalTitle && song && !hasHebrew(song.title)) {
             updates.title = r.canonicalTitle
           }
-          if (r.canonicalArtist && song && hasHebrew(song.artist || '') === hasHebrew(r.canonicalArtist)) {
+          if (r.canonicalArtist && song && !hasHebrew(song.artist)) {
             updates.artist = r.canonicalArtist
           }
           if (r.bpm) updates.bpm = r.bpm

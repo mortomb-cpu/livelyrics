@@ -164,11 +164,11 @@ export default function LyricsEditor({ song, onSave, onClose }) {
         setLyrics(result)
       } else {
         setLyrics(result.lyrics)
-        const hasHebrew = (s) => /[֐-׿]/.test(s)
-        if (result.canonicalTitle && hasHebrew(title) === hasHebrew(result.canonicalTitle)) {
+        const hasHebrew = (s) => /[֐-׿]/.test(s || '')
+        if (result.canonicalTitle && !hasHebrew(title)) {
           setTitle(result.canonicalTitle)
         }
-        if (result.canonicalArtist && hasHebrew(artist) === hasHebrew(result.canonicalArtist)) {
+        if (result.canonicalArtist && !hasHebrew(artist)) {
           setArtist(result.canonicalArtist)
         }
       }
