@@ -169,7 +169,8 @@ async function fetchFromGenius(artist, title) {
     // someone else's lyrics rendered in another language. They match a title
     // perfectly and are never what a performer wants on stage.
     const isTranslationAccount = (name) =>
-      /translation|traducc|übersetz|תרגומים|переводы|genius\s*(romanizations?|english)/i.test(name || '');
+      /translation|traducc|übersetz|překlad|תרגומים|переводы|переклад|tradução|traduzion|fordítás/i.test(name || '')
+      || /^genius\s/i.test(name || '');
     const isParody = (hit) => {
       const t = (hit.result?.title || '').toLowerCase();
       return /parody|covid|corona|quarantine|\bfunny\b/i.test(t);
