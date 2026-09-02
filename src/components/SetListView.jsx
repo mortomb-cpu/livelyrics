@@ -1032,6 +1032,10 @@ export default function SetListView({
           <LyricsEditor
             song={editingSong}
             onSave={(updates) => {
+              if (!updates.lyrics?.trim() && editingSong.lyrics) {
+                deleteCachedSong(editingSong.artist, editingSong.title)
+                updates.lyricsStatus = 'pending'
+              }
               onUpdateSong(editingSong.id, updates)
               setEditingSong(null)
             }}
