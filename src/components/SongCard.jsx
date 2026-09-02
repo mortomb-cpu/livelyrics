@@ -5,8 +5,12 @@ import { formatDuration } from '../utils/duration'
 function renderTitle(title) {
   if (!title) return title
   const clean = title.replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
-  // Normalize reversed parens )...( → (...) so markers display correctly
-  const fixed = clean.replace(/\)([^()]*)\(/g, '($1)')
+  // RTL editors store )6 No( — swap parens AND reverse the inner words
+  // so )6 No( → (No 6) instead of (6 No)
+  const fixed = clean.replace(/\)([^()]*)\(/g, (_, inner) => {
+    const reversed = inner.trim().split(/\s+/).reverse().join(' ')
+    return '(' + reversed + ')'
+  })
   const parts = fixed.split(/(\([^)]*\))/)
   if (parts.length === 1) return fixed
   return parts.map((part, i) =>

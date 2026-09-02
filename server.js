@@ -355,6 +355,17 @@ async function fetchFromShironet(artist, title) {
       const pageHtml = await pageRes.text();
       const $p = cheerio.load(pageHtml);
 
+      // Verify the page is for the right song by checking the page title
+      const pageTitle = $p('title').text() || '';
+      const pageArtist = $p('.artist_name_txt').first().text().trim()
+        || $p('.artist_name').first().text().trim() || '';
+      const titleNorm = title.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+      const pageTitleNorm = pageTitle.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+      if (titleNorm && !pageTitleNorm.includes(titleNorm)) {
+        console.log(`[lyrics] Shironet: page "${pageTitle}" doesn't match "${title}", skipping`);
+        continue;
+      }
+
       // Extract lyrics — Shironet uses several possible containers
       let lyrics = '';
       $p('.artist_lyrics_text, .lyrics_text, #songLyricsContainer, .songLyricsV14 .artist_lyrics_text').each((_, el) => {
@@ -548,7 +559,7 @@ function addStructureLabels(lyrics) {
   if (groups.length <= 1) return lyrics; // Nothing to structure
 
   // Normalize a group to a comparison key (lowercase, no punctuation)
-  const groupKey = (g) => g.map(l => l.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()).join('|');
+  const groupKey = (g) => g.map(l => l.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').trim()).join('|');
 
   // Count how many times each group pattern appears
   const keyCounts = {};
