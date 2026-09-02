@@ -7,6 +7,13 @@ import { deleteCachedSong } from './utils/lyricsCache'
 
 const STORAGE_KEY = 'livelyrics_data'
 
+function fixBidiTitle(t) {
+  if (!t) return t
+  return t
+    .replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+    .replace(/\)([^()]*)\(/g, (_, inner) => '(' + inner.trim().split(/\s+/).reverse().join(' ') + ')')
+}
+
 function App() {
   const [songs, setSongs] = useState([])
   const [sets, setSets] = useState([{ name: 'Set 1', songIds: [] }])
@@ -20,7 +27,7 @@ function App() {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         const data = JSON.parse(saved)
-        if (data.songs?.length) setSongs(data.songs)
+        if (data.songs?.length) setSongs(data.songs.map(s => ({ ...s, title: fixBidiTitle(s.title) })))
         if (data.sets?.length) setSets(data.sets)
         if (data.encoreSongIds?.length) setEncoreSongIds(data.encoreSongIds)
         if (data.additionalSongIds?.length) setAdditionalSongIds(data.additionalSongIds)
