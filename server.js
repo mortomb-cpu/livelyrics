@@ -809,7 +809,8 @@ app.get('/api/lyrics', async (req, res) => {
  * re-download of the whole library.
  */
 app.get('/api/songinfo', async (req, res) => {
-  const { artist, title } = req.query;
+  const { artist } = req.query;
+  const title = (req.query.title || '').replace(/[''`]/g, "'");
   if (!title) return res.status(400).json({ error: 'title required' });
 
   try {
