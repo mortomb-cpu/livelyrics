@@ -127,9 +127,11 @@ export default function LyricsEditor({ song, onSave, onClose }) {
   const fileInputRef = useRef(null)
   const needsAttention = song.needsAttention || song.lyricsStatus === 'attention'
 
-  // Auto-check library for exact match on mount (for needsAttention songs)
+  // Auto-check library for exact match on mount — only for songs freshly
+  // imported from a file that couldn't be identified (status 'attention').
+  // NOT for songs whose lyrics were deliberately cleared (status 'pending').
   useEffect(() => {
-    if (!needsAttention) return
+    if (song.lyricsStatus !== 'attention') return
     const checkLibrary = async () => {
       // Try the raw title as a search term
       const rawSearch = song.rawTitle || song.title
@@ -237,11 +239,10 @@ export default function LyricsEditor({ song, onSave, onClose }) {
   }
 
   const handleSave = () => {
-    const lyricsCleared = !lyrics && song.lyrics
     const updates = {
       lyrics,
       lyricsStatus: lyrics ? 'manual' : 'pending',
-      needsAttention: lyricsCleared ? false : (!title || !artist || !lyrics)
+      needsAttention: !title || !artist
     }
     if (title !== song.title) updates.title = title
     if (artist !== song.artist) updates.artist = artist
