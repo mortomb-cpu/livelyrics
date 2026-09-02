@@ -356,14 +356,16 @@ async function fetchFromShironet(artist, title) {
       const $p = cheerio.load(pageHtml);
 
       // Verify the page is for the right song by checking the page title
-      const pageTitle = $p('title').text() || '';
-      const pageArtist = $p('.artist_name_txt').first().text().trim()
-        || $p('.artist_name').first().text().trim() || '';
-      const titleNorm = title.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
-      const pageTitleNorm = pageTitle.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
-      if (titleNorm && !pageTitleNorm.includes(titleNorm)) {
-        console.log(`[lyrics] Shironet: page "${pageTitle}" doesn't match "${title}", skipping`);
-        continue;
+      try {
+        const pageTitle = $p('title').text() || '';
+        const titleNorm = title.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+        const pageTitleNorm = pageTitle.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+        if (titleNorm && pageTitleNorm && !pageTitleNorm.includes(titleNorm)) {
+          console.log(`[lyrics] Shironet: page "${pageTitle}" doesn't match "${title}", skipping`);
+          continue;
+        }
+      } catch (matchErr) {
+        console.log(`[lyrics] Shironet: title match check failed: ${matchErr.message}`);
       }
 
       // Extract lyrics — Shironet uses several possible containers

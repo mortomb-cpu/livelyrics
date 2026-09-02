@@ -111,8 +111,15 @@ async function extractTextFromWord(file) {
   return result.value.trim()
 }
 
+function normalizeBidiTitle(t) {
+  if (!t) return t
+  return t
+    .replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+    .replace(/\)([^()]*)\(/g, (_, inner) => '(' + inner.trim().split(/\s+/).reverse().join(' ') + ')')
+}
+
 export default function LyricsEditor({ song, onSave, onClose }) {
-  const [title, setTitle] = useState(song.title || '')
+  const [title, setTitle] = useState(normalizeBidiTitle(song.title) || '')
   const [artist, setArtist] = useState(song.artist || '')
   const [durationText, setDurationText] = useState(formatDuration(song.duration) || '')
   const [lyrics, setLyrics] = useState(song.lyrics || '')
