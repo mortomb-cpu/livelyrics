@@ -315,6 +315,52 @@ function tidyArtist(name, title) {
 }
 
 /**
+ * Fetch Hebrew lyrics from Shironet (shironet.mako.co.il).
+ * Searches by artist + title, scrapes the lyrics from the song page.
+ */
+async function fetchFromShironet(artist, title) {
+  if (!HEBREW.test(title) && !HEBREW.test(artist || '')) return null;
+  try {
+    const query = (artist ? artist + ' ' + title : title);
+    const searchUrl = `https://shironet.mako.co.il/search?type=songs&q=${encodeURIComponent(query)}`;
+    const searchRes = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LiveLyrics/1.0)' },
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!searchRes.ok) return null;
+    const searchHtml = await searchRes.text();
+    const $s = cheerio.load(searchHtml);
+
+    const firstLink = $s('a.search_link_name_big').first().attr('href');
+    if (!firstLink) return null;
+    const songUrl = firstLink.startsWith('http') ? firstLink : 'https://shironet.mako.co.il' + firstLink;
+
+    const pageRes = await fetch(songUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LiveLyrics/1.0)' },
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!pageRes.ok) return null;
+    const pageHtml = await pageRes.text();
+    const $p = cheerio.load(pageHtml);
+
+    let lyrics = '';
+    $p('.artist_lyrics_text, .lyrics_text').each((_, el) => {
+      $p(el).find('br').replaceWith('\n');
+      lyrics += $p(el).text() + '\n';
+    });
+    lyrics = lyrics.trim();
+
+    if (lyrics.length > 30) {
+      console.log(`[lyrics] Found via Shironet: ${artist} - ${title}`);
+      return { lyrics, source: 'shironet.mako.co.il' };
+    }
+  } catch (e) {
+    console.log(`[lyrics] Shironet failed: ${e.message}`);
+  }
+  return null;
+}
+
+/**
  * Fetch from ALL sources in parallel, return all results.
  */
 async function fetchAllSources(artist, title) {
@@ -323,6 +369,7 @@ async function fetchAllSources(artist, title) {
     fetchFromLyricsOvh(artist, title),
     fetchFromLrclib(artist, title),
     fetchFromChartLyrics(artist, title),
+    fetchFromShironet(artist, title),
   ]);
 
   return results
