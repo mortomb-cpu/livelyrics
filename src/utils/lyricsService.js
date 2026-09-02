@@ -18,7 +18,9 @@ import { findCachedLyrics, cacheLyrics } from './lyricsCache'
  */
 export function searchableTitle(title) {
   return (title || '')
-    .replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*$/i, '')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
+    .replace(/[''`]/g, "'")
+    .replace(/\s*[()]\s*(?:(?:no\.?|num\.?|#)\s*\d{1,2}|\d{1,2}\s*(?:no\.?|num\.?))\s*[()]\s*/gi, '')
     .trim() || title
 }
 
@@ -58,7 +60,9 @@ export async function fetchLyrics(artist, title, { useCache = true } = {}) {
     syncedLines: data.syncedLines || null,
     duration: data.duration || null,
     // Only set when we asked without an artist and the source named one.
-    discoveredArtist: data.discoveredArtist || null
+    discoveredArtist: data.discoveredArtist || null,
+    canonicalTitle: data.canonicalTitle || null,
+    canonicalArtist: data.canonicalArtist || null
   }
 }
 
@@ -207,6 +211,8 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
           duration: result.duration,
           // Fill in an artist the set list never had — never overwrite one it did.
           discoveredArtist: song.artist ? null : result.discoveredArtist,
+          canonicalTitle: result.canonicalTitle,
+          canonicalArtist: result.canonicalArtist,
           status: song._cachedLyrics ? 'cached' : 'fetched'
         }
       })

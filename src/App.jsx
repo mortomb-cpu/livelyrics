@@ -7,6 +7,22 @@ import { deleteCachedSong } from './utils/lyricsCache'
 
 const STORAGE_KEY = 'livelyrics_data'
 
+function fixBidiTitle(t) {
+  if (!t) return t
+  let fixed = t
+    .replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+    .replace(/\)([^()]*)\(/g, (_, inner) => '(' + inner.trim().split(/\s+/).reverse().join(' ') + ')')
+  // Strip English transliterations from Hebrew titles: "Eretz Hadasha - ארץ חדשה" → "ארץ חדשה"
+  if (/[֐-׿]/.test(fixed) && fixed.includes(' - ')) {
+    const parts = fixed.split(/\s+-\s+/)
+    const hebrewPart = parts.find(p => /[֐-׿]/.test(p))
+    if (hebrewPart && parts.some(p => !/[֐-׿]/.test(p))) {
+      fixed = hebrewPart.trim()
+    }
+  }
+  return fixed
+}
+
 function App() {
   const [songs, setSongs] = useState([])
   const [sets, setSets] = useState([{ name: 'Set 1', songIds: [] }])
@@ -20,7 +36,7 @@ function App() {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         const data = JSON.parse(saved)
-        if (data.songs?.length) setSongs(data.songs)
+        if (data.songs?.length) setSongs(data.songs.map(s => ({ ...s, title: fixBidiTitle(s.title), artist: fixBidiTitle(s.artist) })))
         if (data.sets?.length) setSets(data.sets)
         if (data.encoreSongIds?.length) setEncoreSongIds(data.encoreSongIds)
         if (data.additionalSongIds?.length) setAdditionalSongIds(data.additionalSongIds)

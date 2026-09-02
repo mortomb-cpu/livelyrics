@@ -269,6 +269,16 @@ export default function SetListView({
           // clear the amber "Needs info" flag.
           const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
           if (r.discoveredArtist) updates.artist = r.discoveredArtist
+          // Only apply canonical corrections for English songs — Hebrew
+          // titles come from the user's set list and should never be touched
+          const song = songs.find(s => s.id === r.id)
+          const hasHebrew = (s) => /[֐-׿]/.test(s || '')
+          if (r.canonicalTitle && song && !hasHebrew(song.title)) {
+            updates.title = r.canonicalTitle
+          }
+          if (r.canonicalArtist && song && !hasHebrew(song.artist)) {
+            updates.artist = r.canonicalArtist
+          }
           if (r.bpm) updates.bpm = r.bpm
           if (r.syncedLines) updates.syncedLines = r.syncedLines
           if (r.duration) updates.duration = r.duration
@@ -1030,6 +1040,13 @@ export default function SetListView({
           <LyricsEditor
             song={editingSong}
             onSave={(updates) => {
+              if (!updates.lyrics?.trim()) {
+                deleteCachedSong(editingSong.artist, editingSong.title)
+                if (updates.title || updates.artist) {
+                  deleteCachedSong(updates.artist || editingSong.artist, updates.title || editingSong.title)
+                }
+                updates.lyricsStatus = 'pending'
+              }
               onUpdateSong(editingSong.id, updates)
               setEditingSong(null)
             }}

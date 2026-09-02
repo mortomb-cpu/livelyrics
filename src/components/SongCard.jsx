@@ -1,5 +1,25 @@
 import { formatDuration } from '../utils/duration'
 
+// Split a title into text and parenthetical parts so (No 3) can be wrapped
+// in dir="ltr" spans — prevents bracket flipping inside RTL titles.
+function renderTitle(title) {
+  if (!title) return title
+  const clean = title.replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+  // RTL editors store )6 No( — swap parens AND reverse the inner words
+  // so )6 No( → (No 6) instead of (6 No)
+  const fixed = clean.replace(/\)([^()]*)\(/g, (_, inner) => {
+    const reversed = inner.trim().split(/\s+/).reverse().join(' ')
+    return '(' + reversed + ')'
+  })
+  const parts = fixed.split(/(\([^)]*\))/)
+  if (parts.length === 1) return fixed
+  return parts.map((part, i) =>
+    /^\(.*\)$/.test(part)
+      ? <span key={i} dir="ltr" style={{unicodeBidi: 'isolate'}}>{part}</span>
+      : part
+  )
+}
+
 const statusColors = {
   pending: 'bg-slate-600',
   attention: 'bg-amber-600',
@@ -53,7 +73,7 @@ export default function SongCard({
         {/* dir="auto" so a Hebrew title lays out right-to-left while English
             ones next to it stay left-to-right. */}
         <div className="flex-1 min-w-0">
-          <div dir="auto" className="text-sm font-medium text-white break-words leading-snug text-left">{song.title}</div>
+          <div dir="auto" className="text-sm font-medium text-white break-words leading-snug text-left">{renderTitle(song.title)}</div>
           {song.artist && (
             <div dir="auto" className="text-xs text-slate-400 break-words leading-snug text-left">{song.artist}</div>
           )}
@@ -136,7 +156,7 @@ export default function SongCard({
 
       {/* Song info — wraps rather than truncating. */}
       <div className="flex-1 min-w-0">
-        <div dir="auto" className="font-medium text-white break-words leading-snug text-left">{song.title}</div>
+        <div dir="auto" className="font-medium text-white break-words leading-snug text-left">{renderTitle(song.title)}</div>
         {song.artist ? (
           <div dir="auto" className="text-sm text-slate-400 break-words leading-snug text-left">{song.artist}</div>
         ) : needsAttention ? (

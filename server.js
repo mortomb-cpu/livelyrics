@@ -171,15 +171,21 @@ async function fetchFromGenius(artist, title) {
     // someone else's lyrics rendered in another language. They match a title
     // perfectly and are never what a performer wants on stage.
     const isTranslationAccount = (name) =>
-      /translation|traducc|übersetz|תרגומים|переводы|genius\s*(romanizations?|english)/i.test(name || '');
+      /translation|traducc|übersetz|překlad|תרגומים|переводы|переклад|tradução|traduzion|fordítás/i.test(name || '')
+      || /^genius\s/i.test(name || '');
+    const isParody = (hit) => {
+      const t = (hit.result?.title || '').toLowerCase();
+      return /parody|covid|corona|quarantine|\bfunny\b/i.test(t);
+    };
 
-    const pool = hits.filter(h => !isTranslationAccount(h.result?.primary_artist?.name));
+    const pool = hits.filter(h => !isTranslationAccount(h.result?.primary_artist?.name) && !isParody(h));
     // If a translation page is all Genius has, treat it as no result. Handing a
     // performer the wrong song's words is worse than handing them none.
     if (!pool.length) return null;
 
     let songUrl = null;
     let foundArtist = null;
+    let matchedHit = null;
     const normArtist = normName(artist);
     if (normArtist) {
       for (const hit of pool.slice(0, 5)) {
@@ -187,6 +193,7 @@ async function fetchFromGenius(artist, title) {
         if (hitArtist && (hitArtist.includes(normArtist) || normArtist.includes(hitArtist))) {
           songUrl = hit.result?.url;
           foundArtist = hit.result?.primary_artist?.name || null;
+          matchedHit = hit.result;
           break;
         }
       }
@@ -195,6 +202,7 @@ async function fetchFromGenius(artist, title) {
     if (!songUrl && pool[0]?.result?.url) {
       songUrl = pool[0].result.url;
       foundArtist = pool[0].result?.primary_artist?.name || null;
+      matchedHit = pool[0].result;
     }
     if (!songUrl) return null;
 
@@ -282,7 +290,13 @@ async function fetchFromGenius(artist, title) {
 
     if (lyrics.length > 50) {
       console.log(`[lyrics] Found via Genius: ${foundArtist || artist} - ${title}`);
-      return { lyrics, source: 'genius.com', foundArtist };
+      return {
+        lyrics,
+        source: 'genius.com',
+        foundArtist,
+        canonicalTitle: matchedHit?.title?.replace(/\s*\(.*?\)\s*$/, '').trim(),
+        canonicalArtist: matchedHit?.primary_artist?.name
+      };
     }
   } catch (e) {
     console.log(`[lyrics] Genius failed: ${e.message}`);
@@ -308,6 +322,80 @@ function tidyArtist(name, title) {
 }
 
 /**
+ * Fetch Hebrew lyrics from Shironet (shironet.mako.co.il).
+ * Searches by artist + title, scrapes the lyrics from the song page.
+ */
+async function fetchFromShironet(artist, title) {
+  if (!HEBREW.test(title) && !HEBREW.test(artist || '')) return null;
+  try {
+    // Shironet search: try artist + title, fall back to title alone
+    const queries = artist ? [artist + ' ' + title, title] : [title];
+    for (const query of queries) {
+      const searchUrl = `https://shironet.mako.co.il/search?type=songs&q=${encodeURIComponent(query)}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'he,en;q=0.9'
+        },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!searchRes.ok) continue;
+      const searchHtml = await searchRes.text();
+      const $s = cheerio.load(searchHtml);
+
+      // Shironet search results: song links in the results table
+      let firstLink = $s('a.search_link_name_big').first().attr('href')
+        || $s('td.search_results_song a').first().attr('href')
+        || $s('.search_results a[href*="html"]').first().attr('href');
+      if (!firstLink) continue;
+      if (!firstLink.startsWith('http')) firstLink = 'https://shironet.mako.co.il' + firstLink;
+
+      const pageRes = await fetch(firstLink, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'he,en;q=0.9'
+        },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!pageRes.ok) continue;
+      const pageHtml = await pageRes.text();
+      const $p = cheerio.load(pageHtml);
+
+      // Verify the page is for the right song by checking the page title
+      try {
+        const pageTitle = $p('title').text() || '';
+        const titleNorm = title.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+        const pageTitleNorm = pageTitle.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+        if (titleNorm && pageTitleNorm && !pageTitleNorm.includes(titleNorm)) {
+          console.log(`[lyrics] Shironet: page "${pageTitle}" doesn't match "${title}", skipping`);
+          continue;
+        }
+      } catch (matchErr) {
+        console.log(`[lyrics] Shironet: title match check failed: ${matchErr.message}`);
+      }
+
+      // Extract lyrics — Shironet uses several possible containers
+      let lyrics = '';
+      $p('.artist_lyrics_text, .lyrics_text, #songLyricsContainer, .songLyricsV14 .artist_lyrics_text').each((_, el) => {
+        $p(el).find('br').replaceWith('\n');
+        const text = $p(el).text();
+        if (text.trim()) lyrics += text + '\n';
+      });
+      lyrics = lyrics.trim();
+
+      if (lyrics.length > 30) {
+        console.log(`[lyrics] Found via Shironet: ${artist} - ${title} (${lyrics.length} chars)`);
+        return { lyrics, source: 'shironet.mako.co.il' };
+      }
+    }
+  } catch (e) {
+    console.log(`[lyrics] Shironet failed: ${e.message}`);
+  }
+  return null;
+}
+
+/**
  * Fetch from ALL sources in parallel, return all results.
  */
 async function fetchAllSources(artist, title) {
@@ -316,6 +404,7 @@ async function fetchAllSources(artist, title) {
     fetchFromLyricsOvh(artist, title),
     fetchFromLrclib(artist, title),
     fetchFromChartLyrics(artist, title),
+    fetchFromShironet(artist, title),
   ]);
 
   return results
@@ -479,7 +568,7 @@ function addStructureLabels(lyrics) {
   if (groups.length <= 1) return lyrics; // Nothing to structure
 
   // Normalize a group to a comparison key (lowercase, no punctuation)
-  const groupKey = (g) => g.map(l => l.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()).join('|');
+  const groupKey = (g) => g.map(l => l.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').trim()).join('|');
 
   // Count how many times each group pattern appears
   const keyCounts = {};
@@ -524,14 +613,23 @@ function addStructureLabels(lyrics) {
  */
 function pickBestVersion(versions) {
   if (versions.length === 0) return null;
+
+  // Extract canonical info from whichever version has it
+  let canonicalTitle = null;
+  let canonicalArtist = null;
+  for (const v of versions) {
+    if (v.canonicalTitle && !canonicalTitle) canonicalTitle = v.canonicalTitle;
+    if (v.canonicalArtist && !canonicalArtist) canonicalArtist = v.canonicalArtist;
+  }
+
   if (versions.length === 1) {
     const cleaned = cleanLyrics(versions[0].lyrics);
     const score = scoreStructure(cleaned);
     if (score < 10) {
       console.log(`[lyrics] No structure found, applying fallback labeling`);
-      return addStructureLabels(cleaned);
+      return { lyrics: addStructureLabels(cleaned), canonicalTitle, canonicalArtist };
     }
-    return cleaned;
+    return { lyrics: cleaned, canonicalTitle, canonicalArtist };
   }
 
   // Clean all versions first
@@ -551,10 +649,10 @@ function pickBestVersion(versions) {
   // If even the best version has no real structure, apply fallback labeling
   if (best.score < 10) {
     console.log(`[lyrics] Best score too low (${best.score}), applying fallback labeling`);
-    return addStructureLabels(best.cleaned);
+    return { lyrics: addStructureLabels(best.cleaned), canonicalTitle, canonicalArtist };
   }
 
-  return best.cleaned;
+  return { lyrics: best.cleaned, canonicalTitle, canonicalArtist };
 }
 
 /**
@@ -651,8 +749,8 @@ app.get('/api/lyrics', async (req, res) => {
       // Keep letters from any script — [^a-zA-Z0-9 ] blanked Hebrew titles
       // entirely and retried the search with an empty string.
       const cleanTitle = title
-        .replace(/['']/g, '')
-        .replace(/[^\p{L}\p{N} ]/gu, ' ')
+        .replace(/['']/g, "'")
+        .replace(/[^\p{L}\p{N} ']/gu, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       if (cleanTitle !== title) {
@@ -663,7 +761,7 @@ app.get('/api/lyrics', async (req, res) => {
     }
 
     if (finalResults.length > 0) {
-      const bestLyrics = pickBestVersion(finalResults);
+      const { lyrics: bestLyrics, canonicalTitle, canonicalArtist } = pickBestVersion(finalResults) || {};
       console.log(`[lyrics] Picked best version for "${title}" by ${artist}`);
 
       // Report the artist the sources actually named. Previously this echoed
@@ -679,7 +777,7 @@ app.get('/api/lyrics', async (req, res) => {
         title
       );
 
-      const response = { lyrics: bestLyrics, artist: artist || discovered, title, bpm };
+      const response = { lyrics: bestLyrics, artist: artist || discovered, title, bpm, canonicalTitle: canonicalTitle || null, canonicalArtist: canonicalArtist || null };
       if (!artist && discovered) response.discoveredArtist = discovered;
       if (syncData) {
         response.syncedLines = syncData.syncedLines;
@@ -713,7 +811,8 @@ app.get('/api/lyrics', async (req, res) => {
  * re-download of the whole library.
  */
 app.get('/api/songinfo', async (req, res) => {
-  const { artist, title } = req.query;
+  const { artist } = req.query;
+  const title = (req.query.title || '').replace(/[''`]/g, "'");
   if (!title) return res.status(400).json({ error: 'title required' });
 
   try {
