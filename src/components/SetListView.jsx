@@ -269,23 +269,15 @@ export default function SetListView({
           // clear the amber "Needs info" flag.
           const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
           if (r.discoveredArtist) updates.artist = r.discoveredArtist
-          // Only apply canonical corrections if the title/artist are similar
-          // to what we already have — prevents parody/cover versions from
-          // overwriting the real song name
+          // Only apply canonical corrections for spelling fixes — skip if
+          // the title uses a different script (e.g. Hebrew original → English)
           const song = songs.find(s => s.id === r.id)
-          if (r.canonicalTitle && song) {
-            const origNorm = song.title.toLowerCase().replace(/[^a-z0-9]/g, '')
-            const canonNorm = r.canonicalTitle.toLowerCase().replace(/[^a-z0-9]/g, '')
-            if (canonNorm.includes(origNorm) || origNorm.includes(canonNorm)) {
-              updates.title = r.canonicalTitle
-            }
+          const hasHebrew = (s) => /[֐-׿]/.test(s)
+          if (r.canonicalTitle && song && hasHebrew(song.title) === hasHebrew(r.canonicalTitle)) {
+            updates.title = r.canonicalTitle
           }
-          if (r.canonicalArtist && song) {
-            const origArtist = (song.artist || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-            const canonArtist = r.canonicalArtist.toLowerCase().replace(/[^a-z0-9]/g, '')
-            if (!origArtist || canonArtist.includes(origArtist) || origArtist.includes(canonArtist)) {
-              updates.artist = r.canonicalArtist
-            }
+          if (r.canonicalArtist && song && hasHebrew(song.artist || '') === hasHebrew(r.canonicalArtist)) {
+            updates.artist = r.canonicalArtist
           }
           if (r.bpm) updates.bpm = r.bpm
           if (r.syncedLines) updates.syncedLines = r.syncedLines

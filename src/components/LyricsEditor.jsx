@@ -162,19 +162,12 @@ export default function LyricsEditor({ song, onSave, onClose }) {
         setLyrics(result)
       } else {
         setLyrics(result.lyrics)
-        if (result.canonicalTitle) {
-          const origNorm = title.toLowerCase().replace(/[^a-z0-9]/g, '')
-          const canonNorm = result.canonicalTitle.toLowerCase().replace(/[^a-z0-9]/g, '')
-          if (canonNorm.includes(origNorm) || origNorm.includes(canonNorm)) {
-            setTitle(result.canonicalTitle)
-          }
+        const hasHebrew = (s) => /[֐-׿]/.test(s)
+        if (result.canonicalTitle && hasHebrew(title) === hasHebrew(result.canonicalTitle)) {
+          setTitle(result.canonicalTitle)
         }
-        if (result.canonicalArtist) {
-          const origArtist = artist.toLowerCase().replace(/[^a-z0-9]/g, '')
-          const canonArtist = result.canonicalArtist.toLowerCase().replace(/[^a-z0-9]/g, '')
-          if (!origArtist || canonArtist.includes(origArtist) || origArtist.includes(canonArtist)) {
-            setArtist(result.canonicalArtist)
-          }
+        if (result.canonicalArtist && hasHebrew(artist) === hasHebrew(result.canonicalArtist)) {
+          setArtist(result.canonicalArtist)
         }
       }
     } catch (err) {
@@ -244,10 +237,11 @@ export default function LyricsEditor({ song, onSave, onClose }) {
   }
 
   const handleSave = () => {
+    const lyricsCleared = !lyrics && song.lyrics
     const updates = {
       lyrics,
-      lyricsStatus: lyrics ? 'manual' : (needsAttention ? 'attention' : 'pending'),
-      needsAttention: !title || !artist || !lyrics
+      lyricsStatus: lyrics ? 'manual' : 'pending',
+      needsAttention: lyricsCleared ? false : (!title || !artist || !lyrics)
     }
     if (title !== song.title) updates.title = title
     if (artist !== song.artist) updates.artist = artist
