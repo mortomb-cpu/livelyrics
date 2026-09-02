@@ -1,10 +1,16 @@
 import { formatDuration } from '../utils/duration'
 
-// Wrap parenthetical markers like (No 3) in Unicode LTR isolates so brackets
-// don't visually flip inside a right-to-left title.
-function fixBidiTitle(title) {
+// Split a title into text and parenthetical parts so (No 3) can be wrapped
+// in dir="ltr" spans — prevents bracket flipping inside RTL titles.
+function renderTitle(title) {
   if (!title) return title
-  return title.replace(/(\([^)]*\))/g, '⁦$1⁩')
+  const parts = title.split(/(\([^)]*\))/)
+  if (parts.length === 1) return title
+  return parts.map((part, i) =>
+    /^\(.*\)$/.test(part)
+      ? <span key={i} dir="ltr">{part}</span>
+      : part
+  )
 }
 
 const statusColors = {
@@ -60,7 +66,7 @@ export default function SongCard({
         {/* dir="auto" so a Hebrew title lays out right-to-left while English
             ones next to it stay left-to-right. */}
         <div className="flex-1 min-w-0">
-          <div dir="auto" className="text-sm font-medium text-white break-words leading-snug text-left">{fixBidiTitle(song.title)}</div>
+          <div dir="auto" className="text-sm font-medium text-white break-words leading-snug text-left">{renderTitle(song.title)}</div>
           {song.artist && (
             <div dir="auto" className="text-xs text-slate-400 break-words leading-snug text-left">{song.artist}</div>
           )}
@@ -143,7 +149,7 @@ export default function SongCard({
 
       {/* Song info — wraps rather than truncating. */}
       <div className="flex-1 min-w-0">
-        <div dir="auto" className="font-medium text-white break-words leading-snug text-left">{fixBidiTitle(song.title)}</div>
+        <div dir="auto" className="font-medium text-white break-words leading-snug text-left">{renderTitle(song.title)}</div>
         {song.artist ? (
           <div dir="auto" className="text-sm text-slate-400 break-words leading-snug text-left">{song.artist}</div>
         ) : needsAttention ? (
