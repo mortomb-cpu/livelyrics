@@ -19,7 +19,7 @@ import { findCachedLyrics, cacheLyrics } from './lyricsCache'
 export function searchableTitle(title) {
   return (title || '')
     .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
-    .replace(/\s*[()]\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*[()]\s*/gi, '')
+    .replace(/\s*[()]\s*(?:(?:no\.?|num\.?|#)\s*\d{1,2}|\d{1,2}\s*(?:no\.?|num\.?))\s*[()]\s*/gi, '')
     .trim() || title
 }
 
