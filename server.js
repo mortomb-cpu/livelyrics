@@ -170,8 +170,12 @@ async function fetchFromGenius(artist, title) {
     // perfectly and are never what a performer wants on stage.
     const isTranslationAccount = (name) =>
       /translation|traducc|übersetz|תרגומים|переводы|genius\s*(romanizations?|english)/i.test(name || '');
+    const isParody = (hit) => {
+      const t = (hit.result?.title || '').toLowerCase();
+      return /parody|covid|corona|quarantine|\bfunny\b/i.test(t);
+    };
 
-    const pool = hits.filter(h => !isTranslationAccount(h.result?.primary_artist?.name));
+    const pool = hits.filter(h => !isTranslationAccount(h.result?.primary_artist?.name) && !isParody(h));
     // If a translation page is all Genius has, treat it as no result. Handing a
     // performer the wrong song's words is worse than handing them none.
     if (!pool.length) return null;

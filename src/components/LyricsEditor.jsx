@@ -162,8 +162,20 @@ export default function LyricsEditor({ song, onSave, onClose }) {
         setLyrics(result)
       } else {
         setLyrics(result.lyrics)
-        if (result.canonicalTitle) setTitle(result.canonicalTitle)
-        if (result.canonicalArtist) setArtist(result.canonicalArtist)
+        if (result.canonicalTitle) {
+          const origNorm = title.toLowerCase().replace(/[^a-z0-9]/g, '')
+          const canonNorm = result.canonicalTitle.toLowerCase().replace(/[^a-z0-9]/g, '')
+          if (canonNorm.includes(origNorm) || origNorm.includes(canonNorm)) {
+            setTitle(result.canonicalTitle)
+          }
+        }
+        if (result.canonicalArtist) {
+          const origArtist = artist.toLowerCase().replace(/[^a-z0-9]/g, '')
+          const canonArtist = result.canonicalArtist.toLowerCase().replace(/[^a-z0-9]/g, '')
+          if (!origArtist || canonArtist.includes(origArtist) || origArtist.includes(canonArtist)) {
+            setArtist(result.canonicalArtist)
+          }
+        }
       }
     } catch (err) {
       setError(err.message)
