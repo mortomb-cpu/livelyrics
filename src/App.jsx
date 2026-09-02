@@ -36,7 +36,7 @@ function App() {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         const data = JSON.parse(saved)
-        if (data.songs?.length) setSongs(data.songs.map(s => ({ ...s, title: fixBidiTitle(s.title) })))
+        if (data.songs?.length) setSongs(data.songs.map(s => ({ ...s, title: fixBidiTitle(s.title), artist: fixBidiTitle(s.artist) })))
         if (data.sets?.length) setSets(data.sets)
         if (data.encoreSongIds?.length) setEncoreSongIds(data.encoreSongIds)
         if (data.additionalSongIds?.length) setAdditionalSongIds(data.additionalSongIds)
