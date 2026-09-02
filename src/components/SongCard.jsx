@@ -4,11 +4,12 @@ import { formatDuration } from '../utils/duration'
 // in dir="ltr" spans — prevents bracket flipping inside RTL titles.
 function renderTitle(title) {
   if (!title) return title
-  const parts = title.split(/(\([^)]*\))/)
-  if (parts.length === 1) return title
+  const clean = title.replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+  const parts = clean.split(/(\([^)]*\))/)
+  if (parts.length === 1) return clean
   return parts.map((part, i) =>
     /^\(.*\)$/.test(part)
-      ? <span key={i} dir="ltr">{part}</span>
+      ? <span key={i} dir="ltr" style={{unicodeBidi: 'isolate'}}>{part}</span>
       : part
   )
 }
