@@ -18,7 +18,7 @@ import { findCachedLyrics, cacheLyrics } from './lyricsCache'
  */
 export function searchableTitle(title) {
   return (title || '')
-    .replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*$/i, '')
+    .replace(/\s*\(\s*(?:no\.?|num\.?|#)?\s*\d{1,2}\s*\)\s*/gi, '')
     .trim() || title
 }
 
