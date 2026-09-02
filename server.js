@@ -163,7 +163,9 @@ async function fetchFromGenius(artist, title) {
     // Hebrew artist to "", and "".includes("") matched every hit blindly.
     const normName = (s) => (s || '')
       .toLowerCase()
-      .replace(/\s+/g, '');
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(/[^\p{L}\p{N}]/gu, '');
 
     // Genius hosts translation and transcription accounts whose "songs" are
     // someone else's lyrics rendered in another language. They match a title
