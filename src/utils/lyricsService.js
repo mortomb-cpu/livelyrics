@@ -58,7 +58,9 @@ export async function fetchLyrics(artist, title, { useCache = true } = {}) {
     syncedLines: data.syncedLines || null,
     duration: data.duration || null,
     // Only set when we asked without an artist and the source named one.
-    discoveredArtist: data.discoveredArtist || null
+    discoveredArtist: data.discoveredArtist || null,
+    canonicalTitle: data.canonicalTitle || null,
+    canonicalArtist: data.canonicalArtist || null
   }
 }
 
@@ -207,6 +209,8 @@ export async function fetchAllLyrics(songs, onProgress, abortSignal) {
           duration: result.duration,
           // Fill in an artist the set list never had — never overwrite one it did.
           discoveredArtist: song.artist ? null : result.discoveredArtist,
+          canonicalTitle: result.canonicalTitle,
+          canonicalArtist: result.canonicalArtist,
           status: song._cachedLyrics ? 'cached' : 'fetched'
         }
       })

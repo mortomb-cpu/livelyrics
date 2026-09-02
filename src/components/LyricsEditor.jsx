@@ -158,7 +158,13 @@ export default function LyricsEditor({ song, onSave, onClose }) {
       const result = await fetchLyrics(artist, title)
       // fetchLyrics returns { lyrics, bpm, ... } — assigning the object itself
       // put "[object Object]" in the editor.
-      setLyrics(typeof result === 'string' ? result : result.lyrics)
+      if (typeof result === 'string') {
+        setLyrics(result)
+      } else {
+        setLyrics(result.lyrics)
+        if (result.canonicalTitle) setTitle(result.canonicalTitle)
+        if (result.canonicalArtist) setArtist(result.canonicalArtist)
+      }
     } catch (err) {
       setError(err.message)
     }

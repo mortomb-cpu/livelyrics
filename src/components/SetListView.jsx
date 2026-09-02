@@ -269,6 +269,8 @@ export default function SetListView({
           // clear the amber "Needs info" flag.
           const updates = { lyrics: r.lyrics, lyricsStatus: r.status, needsAttention: false }
           if (r.discoveredArtist) updates.artist = r.discoveredArtist
+          if (r.canonicalTitle) updates.title = r.canonicalTitle
+          if (r.canonicalArtist) updates.artist = r.canonicalArtist
           if (r.bpm) updates.bpm = r.bpm
           if (r.syncedLines) updates.syncedLines = r.syncedLines
           if (r.duration) updates.duration = r.duration

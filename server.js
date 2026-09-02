@@ -163,9 +163,7 @@ async function fetchFromGenius(artist, title) {
     // Hebrew artist to "", and "".includes("") matched every hit blindly.
     const normName = (s) => (s || '')
       .toLowerCase()
-      .normalize('NFKD')
-      .replace(/\p{M}/gu, '')
-      .replace(/[^\p{L}\p{N}]/gu, '');
+      .replace(/\s+/g, '');
 
     // Genius hosts translation and transcription accounts whose "songs" are
     // someone else's lyrics rendered in another language. They match a title
@@ -180,6 +178,7 @@ async function fetchFromGenius(artist, title) {
 
     let songUrl = null;
     let foundArtist = null;
+    let matchedHit = null;
     const normArtist = normName(artist);
     if (normArtist) {
       for (const hit of pool.slice(0, 5)) {
@@ -187,6 +186,7 @@ async function fetchFromGenius(artist, title) {
         if (hitArtist && (hitArtist.includes(normArtist) || normArtist.includes(hitArtist))) {
           songUrl = hit.result?.url;
           foundArtist = hit.result?.primary_artist?.name || null;
+          matchedHit = hit.result;
           break;
         }
       }
@@ -195,6 +195,7 @@ async function fetchFromGenius(artist, title) {
     if (!songUrl && pool[0]?.result?.url) {
       songUrl = pool[0].result.url;
       foundArtist = pool[0].result?.primary_artist?.name || null;
+      matchedHit = pool[0].result;
     }
     if (!songUrl) return null;
 
@@ -282,7 +283,13 @@ async function fetchFromGenius(artist, title) {
 
     if (lyrics.length > 50) {
       console.log(`[lyrics] Found via Genius: ${foundArtist || artist} - ${title}`);
-      return { lyrics, source: 'genius.com', foundArtist };
+      return {
+        lyrics,
+        source: 'genius.com',
+        foundArtist,
+        canonicalTitle: matchedHit?.title?.replace(/\s*\(.*?\)\s*$/, '').trim(),
+        canonicalArtist: matchedHit?.primary_artist?.name
+      };
     }
   } catch (e) {
     console.log(`[lyrics] Genius failed: ${e.message}`);
@@ -524,14 +531,23 @@ function addStructureLabels(lyrics) {
  */
 function pickBestVersion(versions) {
   if (versions.length === 0) return null;
+
+  // Extract canonical info from whichever version has it
+  let canonicalTitle = null;
+  let canonicalArtist = null;
+  for (const v of versions) {
+    if (v.canonicalTitle && !canonicalTitle) canonicalTitle = v.canonicalTitle;
+    if (v.canonicalArtist && !canonicalArtist) canonicalArtist = v.canonicalArtist;
+  }
+
   if (versions.length === 1) {
     const cleaned = cleanLyrics(versions[0].lyrics);
     const score = scoreStructure(cleaned);
     if (score < 10) {
       console.log(`[lyrics] No structure found, applying fallback labeling`);
-      return addStructureLabels(cleaned);
+      return { lyrics: addStructureLabels(cleaned), canonicalTitle, canonicalArtist };
     }
-    return cleaned;
+    return { lyrics: cleaned, canonicalTitle, canonicalArtist };
   }
 
   // Clean all versions first
@@ -551,10 +567,10 @@ function pickBestVersion(versions) {
   // If even the best version has no real structure, apply fallback labeling
   if (best.score < 10) {
     console.log(`[lyrics] Best score too low (${best.score}), applying fallback labeling`);
-    return addStructureLabels(best.cleaned);
+    return { lyrics: addStructureLabels(best.cleaned), canonicalTitle, canonicalArtist };
   }
 
-  return best.cleaned;
+  return { lyrics: best.cleaned, canonicalTitle, canonicalArtist };
 }
 
 /**
@@ -651,8 +667,8 @@ app.get('/api/lyrics', async (req, res) => {
       // Keep letters from any script — [^a-zA-Z0-9 ] blanked Hebrew titles
       // entirely and retried the search with an empty string.
       const cleanTitle = title
-        .replace(/['']/g, '')
-        .replace(/[^\p{L}\p{N} ]/gu, ' ')
+        .replace(/['']/g, "'")
+        .replace(/[^\p{L}\p{N} ']/gu, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       if (cleanTitle !== title) {
@@ -663,7 +679,7 @@ app.get('/api/lyrics', async (req, res) => {
     }
 
     if (finalResults.length > 0) {
-      const bestLyrics = pickBestVersion(finalResults);
+      const { lyrics: bestLyrics, canonicalTitle, canonicalArtist } = pickBestVersion(finalResults) || {};
       console.log(`[lyrics] Picked best version for "${title}" by ${artist}`);
 
       // Report the artist the sources actually named. Previously this echoed
@@ -679,7 +695,7 @@ app.get('/api/lyrics', async (req, res) => {
         title
       );
 
-      const response = { lyrics: bestLyrics, artist: artist || discovered, title, bpm };
+      const response = { lyrics: bestLyrics, artist: artist || discovered, title, bpm, canonicalTitle: canonicalTitle || null, canonicalArtist: canonicalArtist || null };
       if (!artist && discovered) response.discoveredArtist = discovered;
       if (syncData) {
         response.syncedLines = syncData.syncedLines;
