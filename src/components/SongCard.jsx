@@ -5,8 +5,10 @@ import { formatDuration } from '../utils/duration'
 function renderTitle(title) {
   if (!title) return title
   const clean = title.replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
-  const parts = clean.split(/(\([^)]*\))/)
-  if (parts.length === 1) return clean
+  // Normalize reversed parens )...( → (...) so markers display correctly
+  const fixed = clean.replace(/\)([^()]*)\(/g, '($1)')
+  const parts = fixed.split(/(\([^)]*\))/)
+  if (parts.length === 1) return fixed
   return parts.map((part, i) =>
     /^\(.*\)$/.test(part)
       ? <span key={i} dir="ltr" style={{unicodeBidi: 'isolate'}}>{part}</span>

@@ -321,38 +321,53 @@ function tidyArtist(name, title) {
 async function fetchFromShironet(artist, title) {
   if (!HEBREW.test(title) && !HEBREW.test(artist || '')) return null;
   try {
-    const query = (artist ? artist + ' ' + title : title);
-    const searchUrl = `https://shironet.mako.co.il/search?type=songs&q=${encodeURIComponent(query)}`;
-    const searchRes = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LiveLyrics/1.0)' },
-      signal: AbortSignal.timeout(12000)
-    });
-    if (!searchRes.ok) return null;
-    const searchHtml = await searchRes.text();
-    const $s = cheerio.load(searchHtml);
+    // Shironet search: try artist + title, fall back to title alone
+    const queries = artist ? [artist + ' ' + title, title] : [title];
+    for (const query of queries) {
+      const searchUrl = `https://shironet.mako.co.il/search?type=songs&q=${encodeURIComponent(query)}`;
+      const searchRes = await fetch(searchUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'he,en;q=0.9'
+        },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!searchRes.ok) continue;
+      const searchHtml = await searchRes.text();
+      const $s = cheerio.load(searchHtml);
 
-    const firstLink = $s('a.search_link_name_big').first().attr('href');
-    if (!firstLink) return null;
-    const songUrl = firstLink.startsWith('http') ? firstLink : 'https://shironet.mako.co.il' + firstLink;
+      // Shironet search results: song links in the results table
+      let firstLink = $s('a.search_link_name_big').first().attr('href')
+        || $s('td.search_results_song a').first().attr('href')
+        || $s('.search_results a[href*="html"]').first().attr('href');
+      if (!firstLink) continue;
+      if (!firstLink.startsWith('http')) firstLink = 'https://shironet.mako.co.il' + firstLink;
 
-    const pageRes = await fetch(songUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LiveLyrics/1.0)' },
-      signal: AbortSignal.timeout(12000)
-    });
-    if (!pageRes.ok) return null;
-    const pageHtml = await pageRes.text();
-    const $p = cheerio.load(pageHtml);
+      const pageRes = await fetch(firstLink, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'he,en;q=0.9'
+        },
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!pageRes.ok) continue;
+      const pageHtml = await pageRes.text();
+      const $p = cheerio.load(pageHtml);
 
-    let lyrics = '';
-    $p('.artist_lyrics_text, .lyrics_text').each((_, el) => {
-      $p(el).find('br').replaceWith('\n');
-      lyrics += $p(el).text() + '\n';
-    });
-    lyrics = lyrics.trim();
+      // Extract lyrics — Shironet uses several possible containers
+      let lyrics = '';
+      $p('.artist_lyrics_text, .lyrics_text, #songLyricsContainer, .songLyricsV14 .artist_lyrics_text').each((_, el) => {
+        $p(el).find('br').replaceWith('\n');
+        const text = $p(el).text();
+        if (text.trim()) lyrics += text + '\n';
+      });
+      lyrics = lyrics.trim();
 
-    if (lyrics.length > 30) {
-      console.log(`[lyrics] Found via Shironet: ${artist} - ${title}`);
-      return { lyrics, source: 'shironet.mako.co.il' };
+      if (lyrics.length > 30) {
+        console.log(`[lyrics] Found via Shironet: ${artist} - ${title} (${lyrics.length} chars)`);
+        return { lyrics, source: 'shironet.mako.co.il' };
+      }
     }
   } catch (e) {
     console.log(`[lyrics] Shironet failed: ${e.message}`);
