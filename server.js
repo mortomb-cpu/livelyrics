@@ -749,7 +749,7 @@ app.get('/api/lyrics', async (req, res) => {
       // Keep letters from any script — [^a-zA-Z0-9 ] blanked Hebrew titles
       // entirely and retried the search with an empty string.
       const cleanTitle = title
-        .replace(/['']/g, "'")
+        .replace(/[\u2018\u2019\u201B\u2032`]/g, "'")
         .replace(/[^\p{L}\p{N} ']/gu, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -812,7 +812,8 @@ app.get('/api/lyrics', async (req, res) => {
  */
 app.get('/api/songinfo', async (req, res) => {
   const { artist } = req.query;
-  const title = (req.query.title || '').replace(/[''`]/g, "'");
+  // \u escapes, not literal curly quotes — see searchableTitle in lyricsService.
+  const title = (req.query.title || '').replace(/[\u2018\u2019\u201B\u2032`]/g, "'");
   if (!title) return res.status(400).json({ error: 'title required' });
 
   try {
@@ -864,10 +865,22 @@ const distPath = join(__dirname, 'dist');
 app.use(express.static(distPath));
 
 // SPA fallback — serve index.html for any non-API route
+// Unknown API routes get a JSON 404. Without this the request fell through
+// the SPA fallback below with no response at all and hung until the client
+// gave up.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: `No such endpoint: ${req.method} /api${req.path}` });
+});
+
 app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(join(distPath, 'index.html'));
+  // The app uses a hash router, so the only page the server ever needs to
+  // serve is "/". A path with a file extension that express.static didn't
+  // find is a missing asset — answer 404, not index.html. Serving HTML for a
+  // missing font let the PDF exporter register a web page as a TTF.
+  if (/\.[a-z0-9]{2,5}$/i.test(req.path)) {
+    return res.status(404).type('text').send(`Not found: ${req.path}`);
   }
+  res.sendFile(join(distPath, 'index.html'));
 });
 
 app.listen(PORT, () => {

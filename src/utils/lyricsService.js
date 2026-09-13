@@ -19,7 +19,11 @@ import { findCachedLyrics, cacheLyrics } from './lyricsCache'
 export function searchableTitle(title) {
   return (title || '')
     .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
-    .replace(/[''`]/g, "'")
+    // Curly/typographic apostrophes (U+2018/2019/201B/2032) and backticks →
+    // straight ' so "Livin’ on a Prayer" matches the lyrics APIs. Written as
+    // \u escapes on purpose: literal curly quotes get silently normalized to
+    // straight ones by some editors, turning this into a no-op.
+    .replace(/[\u2018\u2019\u201B\u2032`]/g, "'")
     .replace(/\s*[()]\s*(?:(?:no\.?|num\.?|#)\s*\d{1,2}|\d{1,2}\s*(?:no\.?|num\.?))\s*[()]\s*/gi, '')
     .trim() || title
 }

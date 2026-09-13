@@ -49,8 +49,15 @@ export async function parseFile(file, onProgress) {
 }
 
 async function parseSpreadsheet(file) {
-  const buffer = await file.arrayBuffer()
-  const workbook = XLSX.read(buffer, { type: 'array' })
+  // A .csv is plain text. Handing its bytes to XLSX as a binary buffer makes it
+  // guess the encoding, and without a BOM it picks Windows-1252 — so a Hebrew
+  // set list came through as "×ª×ª××¨×" and every Hebrew title collapsed to
+  // the same garbage key, which the importer then dropped as duplicates.
+  // file.text() decodes UTF-8 (BOM or not); real .xlsx/.xls stay binary.
+  const isCsv = /\.csv$/i.test(file.name)
+  const workbook = isCsv
+    ? XLSX.read(await file.text(), { type: 'string' })
+    : XLSX.read(await file.arrayBuffer(), { type: 'array' })
   const sheet = workbook.Sheets[workbook.SheetNames[0]]
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 })
 
