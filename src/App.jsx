@@ -4,24 +4,9 @@ import SetListView from './components/SetListView'
 import PerformView from './components/PerformView'
 import { findExistingSong } from './utils/songMatch'
 import { deleteCachedSong } from './utils/lyricsCache'
+import { fixBidiTitle } from './utils/bidi'
 
 const STORAGE_KEY = 'livelyrics_data'
-
-function fixBidiTitle(t) {
-  if (!t) return t
-  let fixed = t
-    .replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
-    .replace(/\)([^()]*)\(/g, (_, inner) => '(' + inner.trim().split(/\s+/).reverse().join(' ') + ')')
-  // Strip English transliterations from Hebrew titles: "Eretz Hadasha - ארץ חדשה" → "ארץ חדשה"
-  if (/[֐-׿]/.test(fixed) && fixed.includes(' - ')) {
-    const parts = fixed.split(/\s+-\s+/)
-    const hebrewPart = parts.find(p => /[֐-׿]/.test(p))
-    if (hebrewPart && parts.some(p => !/[֐-׿]/.test(p))) {
-      fixed = hebrewPart.trim()
-    }
-  }
-  return fixed
-}
 
 function App() {
   const [songs, setSongs] = useState([])

@@ -27,11 +27,27 @@ function loadHebrewFont() {
     return btoa(binary)
   }
 
+  // A TrueType/OpenType file opens with one of these four-byte tags.
+  const looksLikeFont = (buf) => {
+    const b = new Uint8Array(buf, 0, 4)
+    const tag = String.fromCharCode(...b)
+    return tag === 'OTTO' || tag === 'true' || (b[0] === 0 && b[1] === 1 && b[2] === 0 && b[3] === 0)
+  }
+
   fontPromise = Promise.all(
     ['Regular', 'Bold'].map(async (weight) => {
       const res = await fetch(`${base}fonts/NotoSansHebrew-${weight}.ttf`)
       if (!res.ok) throw new Error(`font ${weight}: HTTP ${res.status}`)
-      return [weight, toBase64(await res.arrayBuffer())]
+      const buf = await res.arrayBuffer()
+      // A missing font does NOT 404: both the Vite dev server and the Express
+      // SPA fallback answer any unknown path with index.html and HTTP 200. That
+      // HTML was being registered with jsPDF as a TTF, which then died deep
+      // inside the library with "Cannot read properties of undefined (reading
+      // 'widths')". Check the bytes, not the status.
+      if (buf.byteLength < 4 || !looksLikeFont(buf)) {
+        throw new Error(`font ${weight}: not a font file (public/fonts is missing from this build)`)
+      }
+      return [weight, toBase64(buf)]
     })
   ).catch((err) => {
     fontPromise = null // let a later export retry
@@ -43,7 +59,7 @@ function loadHebrewFont() {
 
 /**
  * Register the Hebrew face on a document. Returns false if it couldn't be
- * loaded, so the caller can fall back to helvetica rather than export nothing.
+ * loaded; the reason is logged so a broken build is diagnosable.
  */
 async function attachHebrewFont(doc) {
   try {
@@ -54,7 +70,8 @@ async function attachHebrewFont(doc) {
       doc.addFont(file, 'NotoSansHebrew', weight === 'Bold' ? 'bold' : 'normal')
     }
     return true
-  } catch {
+  } catch (err) {
+    console.warn('[pdf] Hebrew font unavailable:', err.message)
     return false
   }
 }
@@ -80,6 +97,15 @@ export async function buildSetListPDF(orderedSets, dateStr) {
     set.songs.some(s => HEBREW.test(`${s.title || ''} ${s.artist || ''}`))
   )
   const hebrewReady = needsHebrew ? await attachHebrewFont(doc) : false
+  // jsPDF's built-in faces are Latin-1 only, so there is no usable fallback for
+  // a Hebrew set list — silently exporting a page of blank rows is worse than
+  // saying why. Latin-only set lists never reach this and export as before.
+  if (needsHebrew && !hebrewReady) {
+    throw new Error(
+      'the Hebrew font (public/fonts/NotoSansHebrew) is missing from this build, ' +
+      'so Hebrew titles cannot be drawn. Reinstall (npm install) to download it.'
+    )
+  }
   const face = hebrewReady ? 'NotoSansHebrew' : 'helvetica'
 
   // Hebrew needs BOTH switches together: setR2L(true) AND a right-aligned draw.

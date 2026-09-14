@@ -1,16 +1,13 @@
 import { formatDuration } from '../utils/duration'
+import { stripBidiMarks, unmirrorMarker } from '../utils/bidi'
 
 // Split a title into text and parenthetical parts so (No 3) can be wrapped
 // in dir="ltr" spans — prevents bracket flipping inside RTL titles.
 function renderTitle(title) {
   if (!title) return title
-  const clean = title.replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
-  // RTL editors store )6 No( — swap parens AND reverse the inner words
-  // so )6 No( → (No 6) instead of (6 No)
-  const fixed = clean.replace(/\)([^()]*)\(/g, (_, inner) => {
-    const reversed = inner.trim().split(/\s+/).reverse().join(' ')
-    return '(' + reversed + ')'
-  })
+  // Titles are normalized in storage by App.jsx on load; this is a display-time
+  // safety net for the same two cases (stray bidi marks, mirrored ")6 No(").
+  const fixed = unmirrorMarker(stripBidiMarks(title))
   const parts = fixed.split(/(\([^)]*\))/)
   if (parts.length === 1) return fixed
   return parts.map((part, i) =>
